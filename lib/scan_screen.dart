@@ -52,6 +52,24 @@ class _ScanScreenState extends State<ScanScreen> {
     super.dispose();
   }
 
+  Future<String> _getProductName(String barcode) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+          '$_supabaseUrl/rest/v1/products?barcode=eq.$barcode&select=name',
+        ),
+        headers: _headers,
+      );
+      if (response.statusCode == 200) {
+        final List data = jsonDecode(response.body);
+        if (data.isNotEmpty) return data.first['name'] ?? 'صنف - $barcode';
+      }
+    } catch (e) {
+      debugPrint('Error: $e');
+    }
+    return 'صنف - $barcode';
+  }
+
   Future<void> _loadExistingLines() async {
     try {
       final response = await http.get(
@@ -91,13 +109,11 @@ class _ScanScreenState extends State<ScanScreen> {
     });
 
     try {
-      // ابحث إذا الباركود موجود مسبقاً في القائمة
       final existingIndex = _scannedItems.indexWhere(
         (item) => item['barcode'] == barcode,
       );
 
       if (existingIndex != -1) {
-        // زد الكمية في قاعدة البيانات
         final newQty = _scannedItems[existingIndex]['qty'] + 1;
         final lineId = _scannedItems[existingIndex]['id'];
 
@@ -111,14 +127,16 @@ class _ScanScreenState extends State<ScanScreen> {
           _scannedItems[existingIndex]['qty'] = newQty;
         });
       } else {
-        // أضف سطر جديد في قاعدة البيانات
+        // احصل على اسم المنتج أولاً
+        final productName = await _getProductName(barcode);
+
         final response = await http.post(
           Uri.parse('$_supabaseUrl/rest/v1/inventory_lines'),
           headers: _headers,
           body: jsonEncode({
             'session_id': widget.sessionId,
             'barcode': barcode,
-            'product_name': 'صنف - $barcode',
+            'product_name': productName,
             'scanned_qty': 1,
             'scanned_at': DateTime.now().toIso8601String(),
           }),
@@ -130,7 +148,7 @@ class _ScanScreenState extends State<ScanScreen> {
           setState(() {
             _scannedItems.insert(0, {
               'barcode': barcode,
-              'name': 'صنف - $barcode',
+              'name': productName,
               'qty': 1,
               'time': DateTime.now().toString().substring(11, 16),
               'id': newLine['id'],
