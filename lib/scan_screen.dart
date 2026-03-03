@@ -1,5 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+
+const _supabaseUrl = 'https://zcwkvadhdxwpdrjidwea.supabase.co';
+const _supabaseKey = 'sb_publishable_mnREAEDOrm_vnZTg4cUhlQ_r2zyl9IL';
+const _supabaseJwt =
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlhdCI6MTc3MjUwNjgwNCwiZXhwIjo5OTk5OTk5OTk5fQ.EuYLr1GXZwBvV4AP6ndkS8Hg8UWnsKaHWTkVZIOEYQA';
+
+Map<String, String> get _headers => {
+  'apikey': _supabaseKey,
+  'Authorization': 'Bearer $_supabaseJwt',
+  'Content-Type': 'application/json',
+  'Prefer': 'return=representation',
+};
 
 class ScanScreen extends StatefulWidget {
   final String sessionName;
@@ -25,7 +39,7 @@ class _ScanScreenState extends State<ScanScreen> {
   @override
   void initState() {
     super.initState();
-    // التركيز على حقل الباركود فور فتح الشاشة
+    _loadExistingLines();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _barcodeFocus.requestFocus();
     });
@@ -38,40 +52,99 @@ class _ScanScreenState extends State<ScanScreen> {
     super.dispose();
   }
 
-  void _processScan(String barcode) {
+  Future<void> _loadExistingLines() async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+          '$_supabaseUrl/rest/v1/inventory_lines?session_id=eq.${widget.sessionId}&order=scanned_at.desc',
+        ),
+        headers: _headers,
+      );
+      if (response.statusCode == 200) {
+        final List data = jsonDecode(response.body);
+        setState(() {
+          _scannedItems.clear();
+          for (var line in data) {
+            _scannedItems.add({
+              'barcode': line['barcode'],
+              'name': line['product_name'] ?? 'صنف - ${line['barcode']}',
+              'qty': line['scanned_qty'] ?? 1,
+              'time': line['scanned_at'] != null
+                  ? line['scanned_at'].toString().substring(11, 16)
+                  : '',
+              'id': line['id'],
+            });
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading lines: $e');
+    }
+  }
+
+  Future<void> _processScan(String barcode) async {
     if (barcode.isEmpty || _isProcessing) return;
 
     setState(() {
       _isProcessing = true;
       _lastScanned = barcode;
+    });
 
-      // ابحث إذا الباركود موجود مسبقاً
+    try {
+      // ابحث إذا الباركود موجود مسبقاً في القائمة
       final existingIndex = _scannedItems.indexWhere(
         (item) => item['barcode'] == barcode,
       );
 
       if (existingIndex != -1) {
-        // زد الكمية
-        _scannedItems[existingIndex]['qty'] =
-            _scannedItems[existingIndex]['qty'] + 1;
-      } else {
-        // أضف صنف جديد
-        _scannedItems.insert(0, {
-          'barcode': barcode,
-          'name': 'صنف - $barcode',
-          'qty': 1,
-          'time': DateTime.now().toString().substring(11, 16),
+        // زد الكمية في قاعدة البيانات
+        final newQty = _scannedItems[existingIndex]['qty'] + 1;
+        final lineId = _scannedItems[existingIndex]['id'];
+
+        await http.patch(
+          Uri.parse('$_supabaseUrl/rest/v1/inventory_lines?id=eq.$lineId'),
+          headers: _headers,
+          body: jsonEncode({'scanned_qty': newQty}),
+        );
+
+        setState(() {
+          _scannedItems[existingIndex]['qty'] = newQty;
         });
+      } else {
+        // أضف سطر جديد في قاعدة البيانات
+        final response = await http.post(
+          Uri.parse('$_supabaseUrl/rest/v1/inventory_lines'),
+          headers: _headers,
+          body: jsonEncode({
+            'session_id': widget.sessionId,
+            'barcode': barcode,
+            'product_name': 'صنف - $barcode',
+            'scanned_qty': 1,
+            'scanned_at': DateTime.now().toIso8601String(),
+          }),
+        );
+
+        if (response.statusCode == 201) {
+          final data = jsonDecode(response.body);
+          final newLine = data is List ? data[0] : data;
+          setState(() {
+            _scannedItems.insert(0, {
+              'barcode': barcode,
+              'name': 'صنف - $barcode',
+              'qty': 1,
+              'time': DateTime.now().toString().substring(11, 16),
+              'id': newLine['id'],
+            });
+          });
+        }
       }
+    } catch (e) {
+      debugPrint('Error saving scan: $e');
+    }
 
-      _isProcessing = false;
-    });
-
-    // امسح الحقل وأعد التركيز
+    setState(() => _isProcessing = false);
     _barcodeController.clear();
     _barcodeFocus.requestFocus();
-
-    // اهتزاز خفيف
     HapticFeedback.lightImpact();
   }
 
@@ -112,13 +185,11 @@ class _ScanScreenState extends State<ScanScreen> {
         ),
         body: Column(
           children: [
-            // قسم المسح
             Container(
               color: Colors.white,
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
-                  // حقل الباركود
                   TextField(
                     controller: _barcodeController,
                     focusNode: _barcodeFocus,
@@ -145,7 +216,6 @@ class _ScanScreenState extends State<ScanScreen> {
                     textInputAction: TextInputAction.done,
                   ),
                   const SizedBox(height: 12),
-                  // آخر مسح
                   if (_lastScanned.isNotEmpty)
                     Container(
                       width: double.infinity,
@@ -178,7 +248,6 @@ class _ScanScreenState extends State<ScanScreen> {
                 ],
               ),
             ),
-            // إحصائيات سريعة
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Row(
@@ -198,7 +267,6 @@ class _ScanScreenState extends State<ScanScreen> {
                 ],
               ),
             ),
-            // قائمة المسح
             Expanded(
               child: _scannedItems.isEmpty
                   ? Center(
@@ -234,10 +302,15 @@ class _ScanScreenState extends State<ScanScreen> {
                         final item = _scannedItems[index];
                         return _ScannedItemCard(
                           item: item,
-                          onDelete: () {
-                            setState(() {
-                              _scannedItems.removeAt(index);
-                            });
+                          onDelete: () async {
+                            final lineId = item['id'];
+                            await http.delete(
+                              Uri.parse(
+                                '$_supabaseUrl/rest/v1/inventory_lines?id=eq.$lineId',
+                              ),
+                              headers: _headers,
+                            );
+                            setState(() => _scannedItems.removeAt(index));
                           },
                         );
                       },
@@ -273,7 +346,7 @@ class _StatChip extends StatelessWidget {
         child: Row(
           children: [
             Text(
-              value,
+              '$value',
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
