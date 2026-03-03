@@ -16,7 +16,7 @@ Map<String, String> get _opsHeaders => {
 };
 
 class OperationsScreen extends StatefulWidget {
-  final String type; // 'جرد' أو 'تحويلات'
+  final String type;
 
   const OperationsScreen({super.key, required this.type});
 
@@ -94,6 +94,8 @@ class _OperationsScreenState extends State<OperationsScreen> {
     final branchFromController = TextEditingController();
     final branchToController = TextEditingController();
     final referenceController = TextEditingController();
+    final customFieldNameController = TextEditingController();
+    final customFieldValueController = TextEditingController();
     String selectedType = widget.type == 'جرد' ? 'جرد' : 'استلام';
 
     showDialog(
@@ -107,7 +109,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // نوع التحويل (فقط في التحويلات)
+                  // نوع التحويل
                   if (widget.type == 'تحويلات') ...[
                     const Align(
                       alignment: Alignment.centerRight,
@@ -204,6 +206,56 @@ class _OperationsScreenState extends State<OperationsScreen> {
                       border: OutlineInputBorder(),
                     ),
                   ),
+
+                  // حقل مخصص للجرد فقط
+                  if (widget.type == 'جرد') ...[
+                    const SizedBox(height: 12),
+                    const Divider(),
+                    const SizedBox(height: 4),
+                    const Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        'حقل مخصص (اختياري)',
+                        style: TextStyle(color: Colors.black45, fontSize: 13),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: TextField(
+                            controller: customFieldNameController,
+                            decoration: const InputDecoration(
+                              labelText: 'اسم الحقل',
+                              hintText: 'مثال: لوكيشن',
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          flex: 3,
+                          child: TextField(
+                            controller: customFieldValueController,
+                            decoration: const InputDecoration(
+                              labelText: 'القيمة',
+                              hintText: 'مثال: A1',
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -239,6 +291,12 @@ class _OperationsScreenState extends State<OperationsScreen> {
 
                   if (widget.type == 'جرد') {
                     opData['branch'] = branchController.text;
+                    if (customFieldNameController.text.isNotEmpty) {
+                      opData['custom_field_name'] =
+                          customFieldNameController.text;
+                      opData['custom_field_value'] =
+                          customFieldValueController.text;
+                    }
                   } else {
                     opData['branch_from'] = branchFromController.text;
                     opData['branch_to'] = branchToController.text;
@@ -376,12 +434,17 @@ class _OperationCard extends StatelessWidget {
     final branchFrom = operation['branch_from'] ?? '';
     final branchTo = operation['branch_to'] ?? '';
     final refNo = operation['reference_no'] ?? '';
+    final customName = operation['custom_field_name'] ?? '';
+    final customValue = operation['custom_field_value'] ?? '';
     final date = operation['started_at'] != null
         ? operation['started_at'].toString().substring(0, 10)
         : '';
 
     String subtitle = '';
-    if (type == 'جرد') subtitle = branch;
+    if (type == 'جرد') {
+      subtitle = branch;
+      if (customName.isNotEmpty) subtitle += '  |  $customName: $customValue';
+    }
     if (type == 'استلام' || type == 'تسليم') {
       subtitle = '$branchFrom ← $branchTo';
       if (refNo.isNotEmpty) subtitle += '  |  $refNo';

@@ -37,7 +37,32 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   void initState() {
     super.initState();
     _session = Map.from(widget.session);
-    _loadLines();
+    _init();
+  }
+
+  Future<void> _init() async {
+    await _refreshSession();
+    await _loadLines();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _refreshSession() async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+          '$_supabaseUrl/rest/v1/inventory_sessions?id=eq.${_session['id']}',
+        ),
+        headers: _headers,
+      );
+      if (response.statusCode == 200) {
+        final List data = jsonDecode(response.body);
+        if (data.isNotEmpty) {
+          _session = Map.from(data.first);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error refreshing session: $e');
+    }
   }
 
   Future<void> _loadLines() async {
@@ -73,9 +98,18 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       final summary = excel['الملخص'];
       excel.setDefaultSheet('الملخص');
 
-      // عنوان
+      final type = _session['session_type'] ?? '';
+      final employee = _session['employee_name'] ?? '';
+      final branch = _session['branch'] ?? '';
+      final branchFrom = _session['branch_from'] ?? '';
+      final branchTo = _session['branch_to'] ?? '';
+      final refNo = _session['reference_no'] ?? '';
+      final customName = _session['custom_field_name'] ?? '';
+      final customValue = _session['custom_field_value'] ?? '';
+
+      // معلومات العملية
       summary.cell(CellIndex.indexByString('A1')).value = TextCellValue(
-        'تقرير جلسة: ${_session['name']}',
+        'تقرير عملية: ${_session['name']}',
       );
       summary.cell(CellIndex.indexByString('A2')).value = TextCellValue(
         'التاريخ: ${_session['started_at']?.toString().substring(0, 10) ?? ''}',
@@ -83,15 +117,35 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       summary.cell(CellIndex.indexByString('A3')).value = TextCellValue(
         'إجمالي عمليات المسح: ${_lines.length}',
       );
+      if (employee.isNotEmpty)
+        summary.cell(CellIndex.indexByString('A4')).value = TextCellValue(
+          'الموظف: $employee',
+        );
+      if (type == 'جرد' && branch.isNotEmpty)
+        summary.cell(CellIndex.indexByString('A5')).value = TextCellValue(
+          'الفرع: $branch',
+        );
+      if (type != 'جرد' && branchFrom.isNotEmpty)
+        summary.cell(CellIndex.indexByString('A5')).value = TextCellValue(
+          'من فرع: $branchFrom  |  إلى فرع: $branchTo',
+        );
+      if (refNo.isNotEmpty)
+        summary.cell(CellIndex.indexByString('A6')).value = TextCellValue(
+          'رقم التحويل: $refNo',
+        );
+      if (customName.isNotEmpty)
+        summary.cell(CellIndex.indexByString('A7')).value = TextCellValue(
+          '$customName: $customValue',
+        );
 
       // رؤوس الأعمدة
-      summary.cell(CellIndex.indexByString('A5')).value = TextCellValue(
+      summary.cell(CellIndex.indexByString('A9')).value = TextCellValue(
         'الباركود',
       );
-      summary.cell(CellIndex.indexByString('B5')).value = TextCellValue(
+      summary.cell(CellIndex.indexByString('B9')).value = TextCellValue(
         'اسم المنتج',
       );
-      summary.cell(CellIndex.indexByString('C5')).value = TextCellValue(
+      summary.cell(CellIndex.indexByString('C9')).value = TextCellValue(
         'إجمالي الكمية',
       );
 
@@ -108,7 +162,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         grouped[barcode]!['qty'] += (line['scanned_qty'] ?? 1) as int;
       }
 
-      int row = 6;
+      int row = 10;
       grouped.forEach((barcode, data) {
         summary.cell(CellIndex.indexByString('A$row')).value = TextCellValue(
           barcode,
@@ -168,12 +222,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       // حذف الورقة الافتراضية
       excel.delete('Sheet1');
 
-      // تحميل الملف في المتصفح
+      // تحميل الملف
       final bytes = excel.encode()!;
       final blob = html.Blob([bytes]);
       final url = html.Url.createObjectUrlFromBlob(blob);
       html.AnchorElement(href: url)
-        ..setAttribute('download', 'جلسة_${_session['name']}.xlsx')
+        ..setAttribute('download', 'عملية_${_session['name']}.xlsx')
         ..click();
       html.Url.revokeObjectUrl(url);
     } catch (e) {
@@ -194,7 +248,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       builder: (context) => Directionality(
         textDirection: TextDirection.rtl,
         child: AlertDialog(
-          title: const Text('إغلاق الجلسة'),
+          title: const Text('إغلاق العملية'),
           content: const Text('هل أنت متأكد؟ لن تتمكن من المسح بعد الإغلاق.'),
           actions: [
             TextButton(
@@ -238,10 +292,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     final date = _session['started_at'] != null
         ? _session['started_at'].toString().substring(0, 10)
         : '';
-
-    // حساب الأصناف المختلفة
     final uniqueProducts = _lines.map((l) => l['barcode']).toSet().length;
     final totalScans = _lines.length;
+    final type = _session['session_type'] ?? '';
+    final employee = _session['employee_name'] ?? '';
+    final branch = _session['branch'] ?? '';
+    final branchFrom = _session['branch_from'] ?? '';
+    final branchTo = _session['branch_to'] ?? '';
+    final refNo = _session['reference_no'] ?? '';
+    final customName = _session['custom_field_name'] ?? '';
+    final customValue = _session['custom_field_value'] ?? '';
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -289,11 +349,63 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                       ),
                       const Divider(),
                       _InfoRow(
+                        icon: Icons.category,
+                        label: 'النوع',
+                        value: type,
+                        valueColor: Colors.blue,
+                      ),
+                      const Divider(),
+                      _InfoRow(
                         icon: Icons.calendar_today,
                         label: 'التاريخ',
                         value: date,
                         valueColor: Colors.black87,
                       ),
+                      if (employee.isNotEmpty) ...[
+                        const Divider(),
+                        _InfoRow(
+                          icon: Icons.person,
+                          label: 'الموظف',
+                          value: employee,
+                          valueColor: Colors.black87,
+                        ),
+                      ],
+                      if (type == 'جرد' && branch.isNotEmpty) ...[
+                        const Divider(),
+                        _InfoRow(
+                          icon: Icons.store,
+                          label: 'الفرع',
+                          value: branch,
+                          valueColor: Colors.black87,
+                        ),
+                      ],
+                      if (type != 'جرد' && branchFrom.isNotEmpty) ...[
+                        const Divider(),
+                        _InfoRow(
+                          icon: Icons.swap_horiz,
+                          label: 'من / إلى',
+                          value: '$branchFrom ← $branchTo',
+                          valueColor: Colors.black87,
+                        ),
+                      ],
+                      if (refNo.isNotEmpty) ...[
+                        const Divider(),
+                        _InfoRow(
+                          icon: Icons.numbers,
+                          label: 'رقم التحويل',
+                          value: refNo,
+                          valueColor: Colors.black87,
+                        ),
+                      ],
+                      if (customName.isNotEmpty) ...[
+                        const Divider(),
+                        _InfoRow(
+                          icon: Icons.label,
+                          label: customName,
+                          value: customValue,
+                          valueColor: Colors.orange,
+                        ),
+                      ],
                       const Divider(),
                       _InfoRow(
                         icon: Icons.qr_code_scanner,
@@ -367,7 +479,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                     ),
                     icon: const Icon(Icons.lock),
                     label: const Text(
-                      'إغلاق الجلسة',
+                      'إغلاق العملية',
                       style: TextStyle(fontSize: 16),
                     ),
                   ),
@@ -387,7 +499,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                       Icon(Icons.lock, color: Colors.grey),
                       SizedBox(width: 8),
                       Text(
-                        'الجلسة مغلقة',
+                        'العملية مغلقة',
                         style: TextStyle(color: Colors.grey, fontSize: 16),
                       ),
                     ],
@@ -397,7 +509,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
               const SizedBox(height: 12),
 
-              // زر تصدير Excel
               SizedBox(
                 width: double.infinity,
                 height: 48,
