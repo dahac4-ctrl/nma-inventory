@@ -25,12 +25,73 @@ class OperationsScreen extends StatefulWidget {
 
 class _OperationsScreenState extends State<OperationsScreen> {
   List<Map<String, dynamic>> _operations = [];
+  List<Map<String, dynamic>> _filtered = [];
   bool _isLoading = true;
+  final TextEditingController _searchController = TextEditingController();
+  String _statusFilter = 'الكل';
+  String _dateFilter = 'الكل';
 
   @override
   void initState() {
     super.initState();
     _loadOperations();
+    _searchController.addListener(_applyFilters);
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _applyFilters() {
+    final query = _searchController.text.toLowerCase();
+    final now = DateTime.now();
+
+    setState(() {
+      _filtered = _operations.where((op) {
+        // فلتر البحث
+        final name = (op['name'] ?? '').toLowerCase();
+        final employee = (op['employee_name'] ?? '').toLowerCase();
+        final branch = (op['branch'] ?? '').toLowerCase();
+        final branchFrom = (op['branch_from'] ?? '').toLowerCase();
+        final branchTo = (op['branch_to'] ?? '').toLowerCase();
+        final refNo = (op['reference_no'] ?? '').toLowerCase();
+        final matchSearch =
+            query.isEmpty ||
+            name.contains(query) ||
+            employee.contains(query) ||
+            branch.contains(query) ||
+            branchFrom.contains(query) ||
+            branchTo.contains(query) ||
+            refNo.contains(query);
+
+        // فلتر الحالة
+        final matchStatus =
+            _statusFilter == 'الكل' ||
+            (_statusFilter == 'مفتوحة' && op['status'] == 'open') ||
+            (_statusFilter == 'مغلقة' && op['status'] == 'closed');
+
+        // فلتر التاريخ
+        bool matchDate = true;
+        if (_dateFilter != 'الكل' && op['started_at'] != null) {
+          final opDate = DateTime.tryParse(op['started_at']) ?? now;
+          if (_dateFilter == 'اليوم') {
+            matchDate =
+                opDate.year == now.year &&
+                opDate.month == now.month &&
+                opDate.day == now.day;
+          } else if (_dateFilter == 'هذا الأسبوع') {
+            final weekAgo = now.subtract(const Duration(days: 7));
+            matchDate = opDate.isAfter(weekAgo);
+          } else if (_dateFilter == 'هذا الشهر') {
+            matchDate = opDate.year == now.year && opDate.month == now.month;
+          }
+        }
+
+        return matchSearch && matchStatus && matchDate;
+      }).toList();
+    });
   }
 
   Future<void> _loadOperations() async {
@@ -52,8 +113,10 @@ class _OperationsScreenState extends State<OperationsScreen> {
         final List data = jsonDecode(response.body);
         setState(() {
           _operations = List<Map<String, dynamic>>.from(data);
+          _filtered = _operations;
           _isLoading = false;
         });
+        _applyFilters();
       } else {
         setState(() => _isLoading = false);
       }
@@ -353,10 +416,43 @@ class _OperationsScreenState extends State<OperationsScreen> {
     );
   }
 
+  Widget _filterChip(
+    String label,
+    String current,
+    void Function(String) onSelected,
+    Color color,
+  ) {
+    final selected = current == label;
+    return GestureDetector(
+      onTap: () {
+        onSelected(label);
+        _applyFilters();
+      },
+      child: Container(
+        margin: const EdgeInsets.only(left: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? color : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: selected ? color : Colors.grey.shade300),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: selected ? Colors.white : Colors.black54,
+            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isJard = widget.type == 'جرد';
     final color = isJard ? Colors.blue.shade700 : Colors.orange;
+    final hasActiveFilter = _statusFilter != 'الكل' || _dateFilter != 'الكل';
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -394,51 +490,178 @@ class _OperationsScreenState extends State<OperationsScreen> {
         ),
         body: _isLoading
             ? const Center(child: CircularProgressIndicator())
-            : _operations.isEmpty
-            ? Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      isJard ? Icons.inventory_2 : Icons.swap_horiz,
-                      size: 80,
-                      color: Colors.grey.shade300,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'لا توجد عمليات بعد\nاضغط + لإنشاء عملية جديدة',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.grey.shade400,
-                        fontSize: 16,
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            : RefreshIndicator(
-                onRefresh: _loadOperations,
-                child: ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _operations.length,
-                  itemBuilder: (context, index) {
-                    final op = _operations[index];
-                    return _OperationCard(
-                      operation: op,
-                      color: color,
-                      onDelete: () => _confirmDelete(op),
-                      onTap: () async {
-                        await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => SessionDetailScreen(session: op),
+            : Column(
+                children: [
+                  Container(
+                    color: Colors.white,
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      children: [
+                        // البحث
+                        TextField(
+                          controller: _searchController,
+                          decoration: InputDecoration(
+                            hintText: 'ابحث باسم العملية أو الموظف أو الفرع...',
+                            prefixIcon: Icon(Icons.search, color: color),
+                            suffixIcon: _searchController.text.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () {
+                                      _searchController.clear();
+                                      _applyFilters();
+                                    },
+                                  )
+                                : null,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: color, width: 2),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
                           ),
-                        );
-                        _loadOperations();
-                      },
-                    );
-                  },
-                ),
+                        ),
+                        const SizedBox(height: 10),
+                        // فلتر الحالة
+                        Row(
+                          children: [
+                            const Text(
+                              'الحالة:',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.black54,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            ...['الكل', 'مفتوحة', 'مغلقة'].map(
+                              (s) => _filterChip(
+                                s,
+                                _statusFilter,
+                                (v) => setState(() => _statusFilter = v),
+                                color,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        // فلتر التاريخ
+                        Row(
+                          children: [
+                            const Text(
+                              'التاريخ:',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.black54,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            ...[
+                              'الكل',
+                              'اليوم',
+                              'هذا الأسبوع',
+                              'هذا الشهر',
+                            ].map(
+                              (s) => _filterChip(
+                                s,
+                                _dateFilter,
+                                (v) => setState(() => _dateFilter = v),
+                                color,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (hasActiveFilter) ...[
+                          const SizedBox(height: 8),
+                          GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _statusFilter = 'الكل';
+                                _dateFilter = 'الكل';
+                              });
+                              _applyFilters();
+                            },
+                            child: const Text(
+                              'مسح الفلاتر',
+                              style: TextStyle(fontSize: 12, color: Colors.red),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  // عدد النتائج
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    child: Row(
+                      children: [
+                        Text(
+                          '${_filtered.length} عملية',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: color,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: _filtered.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.search_off,
+                                  size: 80,
+                                  color: Colors.grey.shade300,
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'لا توجد نتائج',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: Colors.grey.shade400,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : RefreshIndicator(
+                            onRefresh: _loadOperations,
+                            child: ListView.builder(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 80),
+                              itemCount: _filtered.length,
+                              itemBuilder: (context, index) {
+                                final op = _filtered[index];
+                                return _OperationCard(
+                                  operation: op,
+                                  color: color,
+                                  onDelete: () => _confirmDelete(op),
+                                  onTap: () async {
+                                    await Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            SessionDetailScreen(session: op),
+                                      ),
+                                    );
+                                    _loadOperations();
+                                  },
+                                );
+                              },
+                            ),
+                          ),
+                  ),
+                ],
               ),
       ),
     );
@@ -490,7 +713,6 @@ class _OperationCard extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
-        onLongPress: !isOpen ? onDelete : null,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
@@ -570,6 +792,7 @@ class _OperationCard extends StatelessWidget {
                 ),
               ),
               Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -593,9 +816,26 @@ class _OperationCard extends StatelessWidget {
                   ),
                   if (!isOpen) ...[
                     const SizedBox(height: 4),
-                    const Text(
-                      'اضغط مطولاً للحذف',
-                      style: TextStyle(fontSize: 9, color: Colors.black38),
+                    GestureDetector(
+                      onTap: onDelete,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text(
+                          'حذف',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ],
