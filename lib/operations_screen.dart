@@ -837,7 +837,7 @@ class _OperationCard extends StatelessWidget {
                         ),
                         const SizedBox(width: 3),
                         Text(
-                          '$uniqueProducts صنف',
+                          '$uniqueProducts ${uniqueProducts == 1 ? 'صنف' : 'أصناف'}',
                           style: TextStyle(
                             fontSize: 11,
                             color: Colors.green.shade600,
