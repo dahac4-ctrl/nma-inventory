@@ -17,7 +17,6 @@ Map<String, String> get _opsHeaders => {
 
 class OperationsScreen extends StatefulWidget {
   final String type;
-
   const OperationsScreen({super.key, required this.type});
 
   @override
@@ -43,7 +42,6 @@ class _OperationsScreenState extends State<OperationsScreen> {
       } else {
         filter = 'or=(session_type.eq.استلام,session_type.eq.تسليم)';
       }
-
       final response = await http.get(
         Uri.parse(
           '$_opsUrl/rest/v1/inventory_sessions?$filter&order=started_at.desc',
@@ -71,9 +69,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
         headers: _opsHeaders,
         body: jsonEncode(data),
       );
-      if (response.statusCode == 201) {
-        await _loadOperations();
-      }
+      if (response.statusCode == 201) await _loadOperations();
     } catch (e) {
       debugPrint('Error: $e');
     }
@@ -86,6 +82,49 @@ class _OperationsScreenState extends State<OperationsScreen> {
     } else {
       return '$type - ${fields['branch_from']} إلى ${fields['branch_to']} - $date';
     }
+  }
+
+  Future<void> _confirmDelete(Map<String, dynamic> op) async {
+    showDialog(
+      context: context,
+      builder: (context) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('حذف العملية'),
+          content: Text('هل أنت متأكد من حذف "${op['name']}"؟'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                try {
+                  await http.delete(
+                    Uri.parse(
+                      '$_opsUrl/rest/v1/inventory_lines?session_id=eq.${op['id']}',
+                    ),
+                    headers: _opsHeaders,
+                  );
+                  await http.delete(
+                    Uri.parse(
+                      '$_opsUrl/rest/v1/inventory_sessions?id=eq.${op['id']}',
+                    ),
+                    headers: _opsHeaders,
+                  );
+                  await _loadOperations();
+                } catch (e) {
+                  debugPrint('Error deleting: $e');
+                }
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text('حذف', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showNewOperationDialog() {
@@ -109,7 +148,6 @@ class _OperationsScreenState extends State<OperationsScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // نوع التحويل
                   if (widget.type == 'تحويلات') ...[
                     const Align(
                       alignment: Alignment.centerRight,
@@ -157,8 +195,6 @@ class _OperationsScreenState extends State<OperationsScreen> {
                     ),
                     const SizedBox(height: 12),
                   ],
-
-                  // حقول الجرد
                   if (widget.type == 'جرد') ...[
                     TextField(
                       controller: branchController,
@@ -169,8 +205,6 @@ class _OperationsScreenState extends State<OperationsScreen> {
                     ),
                     const SizedBox(height: 12),
                   ],
-
-                  // حقول التحويلات
                   if (widget.type == 'تحويلات') ...[
                     TextField(
                       controller: branchFromController,
@@ -197,8 +231,6 @@ class _OperationsScreenState extends State<OperationsScreen> {
                     ),
                     const SizedBox(height: 12),
                   ],
-
-                  // اسم الموظف
                   TextField(
                     controller: employeeController,
                     decoration: const InputDecoration(
@@ -206,8 +238,6 @@ class _OperationsScreenState extends State<OperationsScreen> {
                       border: OutlineInputBorder(),
                     ),
                   ),
-
-                  // حقل مخصص للجرد فقط
                   if (widget.type == 'جرد') ...[
                     const SizedBox(height: 12),
                     const Divider(),
@@ -396,6 +426,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
                     return _OperationCard(
                       operation: op,
                       color: color,
+                      onDelete: () => _confirmDelete(op),
                       onTap: () async {
                         await Navigator.push(
                           context,
@@ -418,11 +449,13 @@ class _OperationCard extends StatelessWidget {
   final Map<String, dynamic> operation;
   final Color color;
   final VoidCallback onTap;
+  final VoidCallback onDelete;
 
   const _OperationCard({
     required this.operation,
     required this.color,
     required this.onTap,
+    required this.onDelete,
   });
 
   @override
@@ -457,6 +490,7 @@ class _OperationCard extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
+        onLongPress: !isOpen ? onDelete : null,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
@@ -535,22 +569,36 @@ class _OperationCard extends StatelessWidget {
                   ],
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: isOpen
-                      ? Colors.green.withOpacity(0.1)
-                      : Colors.grey.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  isOpen ? 'مفتوحة' : 'مغلقة',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isOpen ? Colors.green : Colors.grey,
-                    fontWeight: FontWeight.bold,
+              Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isOpen
+                          ? Colors.green.withOpacity(0.1)
+                          : Colors.grey.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      isOpen ? 'مفتوحة' : 'مغلقة',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isOpen ? Colors.green : Colors.grey,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
-                ),
+                  if (!isOpen) ...[
+                    const SizedBox(height: 4),
+                    const Text(
+                      'اضغط مطولاً للحذف',
+                      style: TextStyle(fontSize: 9, color: Colors.black38),
+                    ),
+                  ],
+                ],
               ),
             ],
           ),
