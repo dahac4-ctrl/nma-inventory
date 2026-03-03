@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'session_detail_screen.dart';
+
+const supabaseUrl = 'https://zcwkvadhdxwpdrjidwea.supabase.co';
+const supabaseKey = 'sb_publishable_mnREAEDOrm_vnZTg4cUhlQ_r2zyl9IL';
 
 class SessionsScreen extends StatefulWidget {
   const SessionsScreen({super.key});
@@ -9,29 +14,64 @@ class SessionsScreen extends StatefulWidget {
 }
 
 class _SessionsScreenState extends State<SessionsScreen> {
-  final List<Map<String, dynamic>> _sessions = [
-    {
-      'id': '1',
-      'name': 'جرد المستودع A',
-      'date': '2026-03-03',
-      'status': 'open',
-      'count': 24,
-    },
-    {
-      'id': '2',
-      'name': 'استلام بضاعة مارس',
-      'date': '2026-03-02',
-      'status': 'closed',
-      'count': 156,
-    },
-    {
-      'id': '3',
-      'name': 'جرد نهاية الشهر',
-      'date': '2026-03-01',
-      'status': 'closed',
-      'count': 89,
-    },
-  ];
+  List<Map<String, dynamic>> _sessions = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSessions();
+  }
+
+  Map<String, String> get _headers => {
+    'apikey': supabaseKey,
+    'Authorization':
+        'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlhdCI6MTc3MjUwNjgwNCwiZXhwIjo5OTk5OTk5OTk5fQ.EuYLr1GXZwBvV4AP6ndkS8Hg8UWnsKaHWTkVZIOEYQA',
+    'Content-Type': 'application/json',
+    'Prefer': 'return=representation',
+  };
+
+  Future<void> _loadSessions() async {
+    setState(() => _isLoading = true);
+    try {
+      final response = await http.get(
+        Uri.parse(
+          '$supabaseUrl/rest/v1/inventory_sessions?order=started_at.desc',
+        ),
+        headers: _headers,
+      );
+      if (response.statusCode == 200) {
+        final List data = jsonDecode(response.body);
+        setState(() {
+          _sessions = List<Map<String, dynamic>>.from(data);
+          _isLoading = false;
+        });
+      } else {
+        setState(() => _isLoading = false);
+        debugPrint('Error: ${response.body}');
+      }
+    } catch (e) {
+      setState(() => _isLoading = false);
+      debugPrint('Error: $e');
+    }
+  }
+
+  Future<void> _createSession(String name) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$supabaseUrl/rest/v1/inventory_sessions'),
+        headers: _headers,
+        body: jsonEncode({'name': name, 'status': 'open', 'type': 'count'}),
+      );
+      if (response.statusCode == 201) {
+        await _loadSessions();
+      } else {
+        debugPrint('Error creating: ${response.body}');
+      }
+    } catch (e) {
+      debugPrint('Error: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -50,6 +90,12 @@ class _SessionsScreenState extends State<SessionsScreen> {
             icon: const Icon(Icons.arrow_back, color: Colors.white),
             onPressed: () => Navigator.pop(context),
           ),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh, color: Colors.white),
+              onPressed: _loadSessions,
+            ),
+          ],
         ),
         floatingActionButton: FloatingActionButton.extended(
           onPressed: _showNewSessionDialog,
@@ -60,7 +106,9 @@ class _SessionsScreenState extends State<SessionsScreen> {
             style: TextStyle(color: Colors.white),
           ),
         ),
-        body: _sessions.isEmpty
+        body: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _sessions.isEmpty
             ? const Center(
                 child: Text(
                   'لا توجد جلسات بعد\nاضغط + لإنشاء جلسة جديدة',
@@ -68,21 +116,28 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   style: TextStyle(color: Colors.black45, fontSize: 16),
                 ),
               )
-            : ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: _sessions.length,
-                itemBuilder: (context, index) {
-                  final session = _sessions[index];
-                  return _SessionCard(
-                    session: session,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => SessionDetailScreen(session: session),
-                      ),
-                    ),
-                  );
-                },
+            : RefreshIndicator(
+                onRefresh: _loadSessions,
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: _sessions.length,
+                  itemBuilder: (context, index) {
+                    final session = _sessions[index];
+                    return _SessionCard(
+                      session: session,
+                      onTap: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                SessionDetailScreen(session: session),
+                          ),
+                        );
+                        _loadSessions();
+                      },
+                    );
+                  },
+                ),
               ),
       ),
     );
@@ -113,16 +168,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
             ElevatedButton(
               onPressed: () {
                 if (controller.text.isNotEmpty) {
-                  setState(() {
-                    _sessions.insert(0, {
-                      'id': DateTime.now().toString(),
-                      'name': controller.text,
-                      'date': DateTime.now().toString().substring(0, 10),
-                      'status': 'open',
-                      'count': 0,
-                    });
-                  });
                   Navigator.pop(context);
+                  _createSession(controller.text);
                 }
               },
               style: ElevatedButton.styleFrom(
@@ -146,6 +193,9 @@ class _SessionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isOpen = session['status'] == 'open';
+    final date = session['started_at'] != null
+        ? session['started_at'].toString().substring(0, 10)
+        : '';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -178,7 +228,7 @@ class _SessionCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      session['name'],
+                      session['name'] ?? '',
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
@@ -194,21 +244,7 @@ class _SessionCard extends StatelessWidget {
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          session['date'],
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.black45,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        const Icon(
-                          Icons.qr_code_scanner,
-                          size: 12,
-                          color: Colors.black45,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${session['count']} صنف',
+                          date,
                           style: const TextStyle(
                             fontSize: 12,
                             color: Colors.black45,
