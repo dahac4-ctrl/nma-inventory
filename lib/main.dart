@@ -111,6 +111,25 @@ class HomeScreen extends StatelessWidget {
                   ],
                 ),
               ),
+              const SizedBox(height: 12),
+              const Center(
+                child: Column(
+                  children: [
+                    Text(
+                      '© 2026 إدارة المخزون - NMA | جميع الحقوق محفوظة',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 11, color: Colors.black38),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'NMA Inventory Management © 2026 | All Rights Reserved',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 11, color: Colors.black38),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
             ],
           ),
         ),
