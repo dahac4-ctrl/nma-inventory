@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'products_screen.dart';
 import 'sessions_screen.dart';
 
 void main() {
@@ -80,7 +81,12 @@ class HomeScreen extends StatelessWidget {
                       title: 'الأصناف',
                       subtitle: 'استيراد / إدارة',
                       color: Colors.green,
-                      onTap: () {},
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const ProductsScreen(),
+                        ),
+                      ),
                     ),
                     MenuCard(
                       icon: Icons.location_on,
