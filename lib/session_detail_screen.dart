@@ -172,7 +172,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       final bytes = excel.encode()!;
       final blob = html.Blob([bytes]);
       final url = html.Url.createObjectUrlFromBlob(blob);
-      final anchor = html.AnchorElement(href: url)
+      html.AnchorElement(href: url)
         ..setAttribute('download', 'جلسة_${_session['name']}.xlsx')
         ..click();
       html.Url.revokeObjectUrl(url);

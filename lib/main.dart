@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'products_screen.dart';
-import 'sessions_screen.dart';
+import 'operations_screen.dart';
 
 void main() {
   runApp(const NMAApp());
@@ -35,7 +35,7 @@ class HomeScreen extends StatelessWidget {
         appBar: AppBar(
           backgroundColor: Colors.blue.shade700,
           title: const Text(
-            'NMA نظام الجرد',
+            'NMA نظام المخزون',
             style: TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.bold,
@@ -66,13 +66,26 @@ class HomeScreen extends StatelessWidget {
                   children: [
                     MenuCard(
                       icon: Icons.inventory_2,
-                      title: 'الجلسات',
-                      subtitle: 'جرد / استلام / تسليم',
+                      title: 'جرد',
+                      subtitle: 'عمليات الجرد',
                       color: Colors.blue,
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => const SessionsScreen(),
+                          builder: (_) => const OperationsScreen(type: 'جرد'),
+                        ),
+                      ),
+                    ),
+                    MenuCard(
+                      icon: Icons.swap_horiz,
+                      title: 'تحويلات',
+                      subtitle: 'استلام / تسليم',
+                      color: Colors.orange,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              const OperationsScreen(type: 'تحويلات'),
                         ),
                       ),
                     ),
@@ -89,16 +102,9 @@ class HomeScreen extends StatelessWidget {
                       ),
                     ),
                     MenuCard(
-                      icon: Icons.location_on,
-                      title: 'المواقع',
-                      subtitle: 'قائمة المواقع',
-                      color: Colors.orange,
-                      onTap: () {},
-                    ),
-                    MenuCard(
-                      icon: Icons.upload_file,
-                      title: 'تصدير',
-                      subtitle: 'CSV / Excel',
+                      icon: Icons.bar_chart,
+                      title: 'التقارير',
+                      subtitle: 'قريباً',
                       color: Colors.purple,
                       onTap: () {},
                     ),
