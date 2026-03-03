@@ -26,6 +26,7 @@ class OperationsScreen extends StatefulWidget {
 class _OperationsScreenState extends State<OperationsScreen> {
   List<Map<String, dynamic>> _operations = [];
   List<Map<String, dynamic>> _filtered = [];
+  Map<String, Map<String, int>> _scanCounts = {};
   bool _isLoading = true;
   final TextEditingController _searchController = TextEditingController();
   String _statusFilter = 'الكل';
@@ -34,7 +35,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadOperations();
+    _loadAll();
     _searchController.addListener(_applyFilters);
   }
 
@@ -44,13 +45,38 @@ class _OperationsScreenState extends State<OperationsScreen> {
     super.dispose();
   }
 
+  Future<void> _loadAll() async {
+    await _loadOperations();
+    await _loadScanCounts();
+  }
+
+  Future<void> _loadScanCounts() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_opsUrl/rest/v1/session_scan_counts'),
+        headers: _opsHeaders,
+      );
+      if (response.statusCode == 200) {
+        final List data = jsonDecode(response.body);
+        final Map<String, Map<String, int>> counts = {};
+        for (final item in data) {
+          counts[item['session_id'].toString()] = {
+            'total_scans': (item['total_scans'] ?? 0) as int,
+            'unique_products': (item['unique_products'] ?? 0) as int,
+          };
+        }
+        setState(() => _scanCounts = counts);
+      }
+    } catch (e) {
+      debugPrint('Error loading counts: $e');
+    }
+  }
+
   void _applyFilters() {
     final query = _searchController.text.toLowerCase();
     final now = DateTime.now();
-
     setState(() {
       _filtered = _operations.where((op) {
-        // فلتر البحث
         final name = (op['name'] ?? '').toLowerCase();
         final employee = (op['employee_name'] ?? '').toLowerCase();
         final branch = (op['branch'] ?? '').toLowerCase();
@@ -66,13 +92,11 @@ class _OperationsScreenState extends State<OperationsScreen> {
             branchTo.contains(query) ||
             refNo.contains(query);
 
-        // فلتر الحالة
         final matchStatus =
             _statusFilter == 'الكل' ||
             (_statusFilter == 'مفتوحة' && op['status'] == 'open') ||
             (_statusFilter == 'مغلقة' && op['status'] == 'closed');
 
-        // فلتر التاريخ
         bool matchDate = true;
         if (_dateFilter != 'الكل' && op['started_at'] != null) {
           final opDate = DateTime.tryParse(op['started_at']) ?? now;
@@ -82,13 +106,11 @@ class _OperationsScreenState extends State<OperationsScreen> {
                 opDate.month == now.month &&
                 opDate.day == now.day;
           } else if (_dateFilter == 'هذا الأسبوع') {
-            final weekAgo = now.subtract(const Duration(days: 7));
-            matchDate = opDate.isAfter(weekAgo);
+            matchDate = opDate.isAfter(now.subtract(const Duration(days: 7)));
           } else if (_dateFilter == 'هذا الشهر') {
             matchDate = opDate.year == now.year && opDate.month == now.month;
           }
         }
-
         return matchSearch && matchStatus && matchDate;
       }).toList();
     });
@@ -132,7 +154,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
         headers: _opsHeaders,
         body: jsonEncode(data),
       );
-      if (response.statusCode == 201) await _loadOperations();
+      if (response.statusCode == 201) await _loadAll();
     } catch (e) {
       debugPrint('Error: $e');
     }
@@ -176,7 +198,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
                     ),
                     headers: _opsHeaders,
                   );
-                  await _loadOperations();
+                  await _loadAll();
                 } catch (e) {
                   debugPrint('Error deleting: $e');
                 }
@@ -373,7 +395,6 @@ class _OperationsScreenState extends State<OperationsScreen> {
                     'branch_from': branchFromController.text,
                     'branch_to': branchToController.text,
                   };
-
                   final opData = <String, dynamic>{
                     'name': _generateName(selectedType, fields),
                     'status': 'open',
@@ -381,7 +402,6 @@ class _OperationsScreenState extends State<OperationsScreen> {
                     'employee_name': employeeController.text,
                     'started_at': DateTime.now().toIso8601String(),
                   };
-
                   if (widget.type == 'جرد') {
                     opData['branch'] = branchController.text;
                     if (customFieldNameController.text.isNotEmpty) {
@@ -395,7 +415,6 @@ class _OperationsScreenState extends State<OperationsScreen> {
                     opData['branch_to'] = branchToController.text;
                     opData['reference_no'] = referenceController.text;
                   }
-
                   Navigator.pop(context);
                   _createOperation(opData);
                 },
@@ -475,7 +494,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
           actions: [
             IconButton(
               icon: const Icon(Icons.refresh, color: Colors.white),
-              onPressed: _loadOperations,
+              onPressed: _loadAll,
             ),
           ],
         ),
@@ -497,7 +516,6 @@ class _OperationsScreenState extends State<OperationsScreen> {
                     padding: const EdgeInsets.all(12),
                     child: Column(
                       children: [
-                        // البحث
                         TextField(
                           controller: _searchController,
                           decoration: InputDecoration(
@@ -526,7 +544,6 @@ class _OperationsScreenState extends State<OperationsScreen> {
                           ),
                         ),
                         const SizedBox(height: 10),
-                        // فلتر الحالة
                         Row(
                           children: [
                             const Text(
@@ -548,7 +565,6 @@ class _OperationsScreenState extends State<OperationsScreen> {
                           ],
                         ),
                         const SizedBox(height: 8),
-                        // فلتر التاريخ
                         Row(
                           children: [
                             const Text(
@@ -593,7 +609,6 @@ class _OperationsScreenState extends State<OperationsScreen> {
                       ],
                     ),
                   ),
-                  // عدد النتائج
                   Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
@@ -636,15 +651,19 @@ class _OperationsScreenState extends State<OperationsScreen> {
                             ),
                           )
                         : RefreshIndicator(
-                            onRefresh: _loadOperations,
+                            onRefresh: _loadAll,
                             child: ListView.builder(
                               padding: const EdgeInsets.fromLTRB(16, 0, 16, 80),
                               itemCount: _filtered.length,
                               itemBuilder: (context, index) {
                                 final op = _filtered[index];
+                                final counts = _scanCounts[op['id'].toString()];
                                 return _OperationCard(
                                   operation: op,
                                   color: color,
+                                  totalScans: counts?['total_scans'] ?? 0,
+                                  uniqueProducts:
+                                      counts?['unique_products'] ?? 0,
                                   onDelete: () => _confirmDelete(op),
                                   onTap: () async {
                                     await Navigator.push(
@@ -654,7 +673,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
                                             SessionDetailScreen(session: op),
                                       ),
                                     );
-                                    _loadOperations();
+                                    _loadAll();
                                   },
                                 );
                               },
@@ -673,12 +692,16 @@ class _OperationCard extends StatelessWidget {
   final Color color;
   final VoidCallback onTap;
   final VoidCallback onDelete;
+  final int totalScans;
+  final int uniqueProducts;
 
   const _OperationCard({
     required this.operation,
     required this.color,
     required this.onTap,
     required this.onDelete,
+    required this.totalScans,
+    required this.uniqueProducts,
   });
 
   @override
@@ -784,6 +807,41 @@ class _OperationCard extends StatelessWidget {
                           style: const TextStyle(
                             fontSize: 11,
                             color: Colors.black38,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    // عداد الأصناف
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.qr_code_scanner,
+                          size: 12,
+                          color: color.withOpacity(0.7),
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          '$totalScans مسح',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: color.withOpacity(0.8),
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Icon(
+                          Icons.category,
+                          size: 12,
+                          color: Colors.green.withOpacity(0.7),
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          '$uniqueProducts صنف',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.green.shade600,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
                       ],
