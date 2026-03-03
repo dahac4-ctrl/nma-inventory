@@ -90,6 +90,9 @@ class _ScanScreenState extends State<ScanScreen> {
               'time': line['scanned_at'] != null
                   ? line['scanned_at'].toString().substring(11, 16)
                   : '',
+              'date': line['scanned_at'] != null
+                  ? line['scanned_at'].toString().substring(0, 10)
+                  : '',
               'id': line['id'],
             });
           }
@@ -109,52 +112,35 @@ class _ScanScreenState extends State<ScanScreen> {
     });
 
     try {
-      final existingIndex = _scannedItems.indexWhere(
-        (item) => item['barcode'] == barcode,
+      // كل مسح = سطر جديد
+      final productName = await _getProductName(barcode);
+      final now = DateTime.now();
+
+      final response = await http.post(
+        Uri.parse('$_supabaseUrl/rest/v1/inventory_lines'),
+        headers: _headers,
+        body: jsonEncode({
+          'session_id': widget.sessionId,
+          'barcode': barcode,
+          'product_name': productName,
+          'scanned_qty': 1,
+          'scanned_at': now.toIso8601String(),
+        }),
       );
 
-      if (existingIndex != -1) {
-        final newQty = _scannedItems[existingIndex]['qty'] + 1;
-        final lineId = _scannedItems[existingIndex]['id'];
-
-        await http.patch(
-          Uri.parse('$_supabaseUrl/rest/v1/inventory_lines?id=eq.$lineId'),
-          headers: _headers,
-          body: jsonEncode({'scanned_qty': newQty}),
-        );
-
+      if (response.statusCode == 201) {
+        final data = jsonDecode(response.body);
+        final newLine = data is List ? data[0] : data;
         setState(() {
-          _scannedItems[existingIndex]['qty'] = newQty;
-        });
-      } else {
-        // احصل على اسم المنتج أولاً
-        final productName = await _getProductName(barcode);
-
-        final response = await http.post(
-          Uri.parse('$_supabaseUrl/rest/v1/inventory_lines'),
-          headers: _headers,
-          body: jsonEncode({
-            'session_id': widget.sessionId,
+          _scannedItems.insert(0, {
             'barcode': barcode,
-            'product_name': productName,
-            'scanned_qty': 1,
-            'scanned_at': DateTime.now().toIso8601String(),
-          }),
-        );
-
-        if (response.statusCode == 201) {
-          final data = jsonDecode(response.body);
-          final newLine = data is List ? data[0] : data;
-          setState(() {
-            _scannedItems.insert(0, {
-              'barcode': barcode,
-              'name': productName,
-              'qty': 1,
-              'time': DateTime.now().toString().substring(11, 16),
-              'id': newLine['id'],
-            });
+            'name': productName,
+            'qty': 1,
+            'time': now.toString().substring(11, 16),
+            'date': now.toString().substring(0, 10),
+            'id': newLine['id'],
           });
-        }
+        });
       }
     } catch (e) {
       debugPrint('Error saving scan: $e');
@@ -191,7 +177,7 @@ class _ScanScreenState extends State<ScanScreen> {
               child: Padding(
                 padding: const EdgeInsets.only(left: 16),
                 child: Text(
-                  '${_scannedItems.length} صنف',
+                  '${_scannedItems.length} مسح',
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -271,15 +257,15 @@ class _ScanScreenState extends State<ScanScreen> {
               child: Row(
                 children: [
                   _StatChip(
-                    label: 'إجمالي الأصناف',
+                    label: 'عمليات المسح',
                     value: '${_scannedItems.length}',
                     color: Colors.blue,
                   ),
                   const SizedBox(width: 8),
                   _StatChip(
-                    label: 'إجمالي الكمية',
+                    label: 'أصناف مختلفة',
                     value:
-                        '${_scannedItems.fold(0, (sum, item) => sum + (item['qty'] as int))}',
+                        '${_scannedItems.map((e) => e['barcode']).toSet().length}',
                     color: Colors.green,
                   ),
                 ],
@@ -397,22 +383,13 @@ class _ScannedItemCard extends StatelessWidget {
         child: Row(
           children: [
             Container(
-              width: 40,
-              height: 40,
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 color: Colors.blue.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Center(
-                child: Text(
-                  '${item['qty']}',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
+              child: const Icon(Icons.qr_code, color: Colors.blue),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -434,11 +411,24 @@ class _ScannedItemCard extends StatelessWidget {
                 ],
               ),
             ),
-            Text(
-              item['time'],
-              style: const TextStyle(color: Colors.black45, fontSize: 11),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  item['time'],
+                  style: const TextStyle(
+                    color: Colors.black54,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  item['date'],
+                  style: const TextStyle(color: Colors.black38, fontSize: 11),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
             IconButton(
               icon: const Icon(Icons.delete_outline, color: Colors.red),
               onPressed: onDelete,

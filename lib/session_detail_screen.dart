@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:excel/excel.dart' hide Border;
+// ignore: avoid_web_libraries_in_flutter
+import 'dart:html' as html;
 import 'scan_screen.dart';
 
 const _supabaseUrl = 'https://zcwkvadhdxwpdrjidwea.supabase.co';
@@ -28,6 +31,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   late Map<String, dynamic> _session;
   List<Map<String, dynamic>> _lines = [];
   bool _isLoading = false;
+  bool _isExporting = false;
 
   @override
   void initState() {
@@ -41,7 +45,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     try {
       final response = await http.get(
         Uri.parse(
-          '$_supabaseUrl/rest/v1/inventory_lines?session_id=eq.${_session['id']}&order=scanned_at.desc',
+          '$_supabaseUrl/rest/v1/inventory_lines?session_id=eq.${_session['id']}&order=scanned_at.asc',
         ),
         headers: _headers,
       );
@@ -57,6 +61,131 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     } catch (e) {
       setState(() => _isLoading = false);
     }
+  }
+
+  Future<void> _exportExcel() async {
+    setState(() => _isExporting = true);
+
+    try {
+      final excel = Excel.createExcel();
+
+      // ===== ورقة 1: الملخص =====
+      final summary = excel['الملخص'];
+      excel.setDefaultSheet('الملخص');
+
+      // عنوان
+      summary.cell(CellIndex.indexByString('A1')).value = TextCellValue(
+        'تقرير جلسة: ${_session['name']}',
+      );
+      summary.cell(CellIndex.indexByString('A2')).value = TextCellValue(
+        'التاريخ: ${_session['started_at']?.toString().substring(0, 10) ?? ''}',
+      );
+      summary.cell(CellIndex.indexByString('A3')).value = TextCellValue(
+        'إجمالي عمليات المسح: ${_lines.length}',
+      );
+
+      // رؤوس الأعمدة
+      summary.cell(CellIndex.indexByString('A5')).value = TextCellValue(
+        'الباركود',
+      );
+      summary.cell(CellIndex.indexByString('B5')).value = TextCellValue(
+        'اسم المنتج',
+      );
+      summary.cell(CellIndex.indexByString('C5')).value = TextCellValue(
+        'إجمالي الكمية',
+      );
+
+      // تجميع الكميات
+      final Map<String, Map<String, dynamic>> grouped = {};
+      for (final line in _lines) {
+        final barcode = line['barcode'] ?? '';
+        if (!grouped.containsKey(barcode)) {
+          grouped[barcode] = {
+            'name': line['product_name'] ?? barcode,
+            'qty': 0,
+          };
+        }
+        grouped[barcode]!['qty'] += (line['scanned_qty'] ?? 1) as int;
+      }
+
+      int row = 6;
+      grouped.forEach((barcode, data) {
+        summary.cell(CellIndex.indexByString('A$row')).value = TextCellValue(
+          barcode,
+        );
+        summary.cell(CellIndex.indexByString('B$row')).value = TextCellValue(
+          data['name'],
+        );
+        summary.cell(CellIndex.indexByString('C$row')).value = IntCellValue(
+          data['qty'],
+        );
+        row++;
+      });
+
+      // ===== ورقة 2: السجل الكامل =====
+      final history = excel['السجل الكامل'];
+
+      history.cell(CellIndex.indexByString('A1')).value = TextCellValue(
+        'الباركود',
+      );
+      history.cell(CellIndex.indexByString('B1')).value = TextCellValue(
+        'اسم المنتج',
+      );
+      history.cell(CellIndex.indexByString('C1')).value = TextCellValue(
+        'الكمية',
+      );
+      history.cell(CellIndex.indexByString('D1')).value = TextCellValue(
+        'التاريخ',
+      );
+      history.cell(CellIndex.indexByString('E1')).value = TextCellValue(
+        'الوقت',
+      );
+
+      int hRow = 2;
+      for (final line in _lines) {
+        final scannedAt = line['scanned_at']?.toString() ?? '';
+        final date = scannedAt.length >= 10 ? scannedAt.substring(0, 10) : '';
+        final time = scannedAt.length >= 19 ? scannedAt.substring(11, 16) : '';
+
+        history.cell(CellIndex.indexByString('A$hRow')).value = TextCellValue(
+          line['barcode'] ?? '',
+        );
+        history.cell(CellIndex.indexByString('B$hRow')).value = TextCellValue(
+          line['product_name'] ?? '',
+        );
+        history.cell(CellIndex.indexByString('C$hRow')).value = IntCellValue(
+          line['scanned_qty'] ?? 1,
+        );
+        history.cell(CellIndex.indexByString('D$hRow')).value = TextCellValue(
+          date,
+        );
+        history.cell(CellIndex.indexByString('E$hRow')).value = TextCellValue(
+          time,
+        );
+        hRow++;
+      }
+
+      // حذف الورقة الافتراضية
+      excel.delete('Sheet1');
+
+      // تحميل الملف في المتصفح
+      final bytes = excel.encode()!;
+      final blob = html.Blob([bytes]);
+      final url = html.Url.createObjectUrlFromBlob(blob);
+      final anchor = html.AnchorElement(href: url)
+        ..setAttribute('download', 'جلسة_${_session['name']}.xlsx')
+        ..click();
+      html.Url.revokeObjectUrl(url);
+    } catch (e) {
+      debugPrint('Export error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('خطأ في التصدير: $e')));
+      }
+    }
+
+    setState(() => _isExporting = false);
   }
 
   Future<void> _lockSession() async {
@@ -109,6 +238,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     final date = _session['started_at'] != null
         ? _session['started_at'].toString().substring(0, 10)
         : '';
+
+    // حساب الأصناف المختلفة
+    final uniqueProducts = _lines.map((l) => l['barcode']).toSet().length;
+    final totalScans = _lines.length;
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -164,9 +297,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                       const Divider(),
                       _InfoRow(
                         icon: Icons.qr_code_scanner,
-                        label: 'إجمالي الأصناف',
-                        value: '${_lines.length} صنف',
+                        label: 'عمليات المسح',
+                        value: '$totalScans عملية',
                         valueColor: Colors.blue,
+                      ),
+                      const Divider(),
+                      _InfoRow(
+                        icon: Icons.category,
+                        label: 'أصناف مختلفة',
+                        value: '$uniqueProducts صنف',
+                        valueColor: Colors.green,
                       ),
                     ],
                   ),
@@ -247,7 +387,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                       Icon(Icons.lock, color: Colors.grey),
                       SizedBox(width: 8),
                       Text(
-                        'الجلسة مغلقة — لا يمكن المسح',
+                        'الجلسة مغلقة',
                         style: TextStyle(color: Colors.grey, fontSize: 16),
                       ),
                     ],
@@ -255,7 +395,40 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 ),
               ],
 
-              const SizedBox(height: 24),
+              const SizedBox(height: 12),
+
+              // زر تصدير Excel
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton.icon(
+                  onPressed: _lines.isEmpty || _isExporting
+                      ? null
+                      : _exportExcel,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade600,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: _isExporting
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Icon(Icons.download, color: Colors.white),
+                  label: Text(
+                    _isExporting ? 'جاري التصدير...' : 'تصدير Excel',
+                    style: const TextStyle(color: Colors.white, fontSize: 16),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
 
               const Align(
                 alignment: Alignment.centerRight,
@@ -298,7 +471,15 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                     : ListView.builder(
                         itemCount: _lines.length,
                         itemBuilder: (context, index) {
-                          final line = _lines[index];
+                          final line = _lines[_lines.length - 1 - index];
+                          final scannedAt =
+                              line['scanned_at']?.toString() ?? '';
+                          final time = scannedAt.length >= 19
+                              ? scannedAt.substring(11, 16)
+                              : '';
+                          final date2 = scannedAt.length >= 10
+                              ? scannedAt.substring(0, 10)
+                              : '';
                           return Card(
                             margin: const EdgeInsets.only(bottom: 8),
                             shape: RoundedRectangleBorder(
@@ -312,30 +493,36 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: const Icon(
-                                  Icons.barcode_reader,
+                                  Icons.qr_code,
                                   color: Colors.blue,
                                 ),
                               ),
                               title: Text(
                                 line['product_name'] ?? line['barcode'] ?? '',
                               ),
-                              subtitle: Text(line['barcode'] ?? ''),
-                              trailing: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.blue.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                  '${line['scanned_qty'] ?? 1}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.blue,
+                              subtitle: Text(
+                                line['barcode'] ?? '',
+                                textDirection: TextDirection.ltr,
+                              ),
+                              trailing: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    time,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                    ),
                                   ),
-                                ),
+                                  Text(
+                                    date2,
+                                    style: const TextStyle(
+                                      color: Colors.black45,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           );
