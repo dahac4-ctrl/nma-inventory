@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:file_picker/file_picker.dart';
+import 'package:excel/excel.dart' hide Border;
 import 'session_detail_screen.dart';
 
 const _opsUrl = 'https://zcwkvadhdxwpdrjidwea.supabase.co';
@@ -91,25 +93,22 @@ class _OperationsScreenState extends State<OperationsScreen> {
             branchFrom.contains(query) ||
             branchTo.contains(query) ||
             refNo.contains(query);
-
         final matchStatus =
             _statusFilter == 'الكل' ||
             (_statusFilter == 'مفتوحة' && op['status'] == 'open') ||
             (_statusFilter == 'مغلقة' && op['status'] == 'closed');
-
         bool matchDate = true;
         if (_dateFilter != 'الكل' && op['started_at'] != null) {
           final opDate = DateTime.tryParse(op['started_at']) ?? now;
-          if (_dateFilter == 'اليوم') {
+          if (_dateFilter == 'اليوم')
             matchDate =
                 opDate.year == now.year &&
                 opDate.month == now.month &&
                 opDate.day == now.day;
-          } else if (_dateFilter == 'هذا الأسبوع') {
+          else if (_dateFilter == 'هذا الأسبوع')
             matchDate = opDate.isAfter(now.subtract(const Duration(days: 7)));
-          } else if (_dateFilter == 'هذا الشهر') {
+          else if (_dateFilter == 'هذا الشهر')
             matchDate = opDate.year == now.year && opDate.month == now.month;
-          }
         }
         return matchSearch && matchStatus && matchDate;
       }).toList();
@@ -119,12 +118,9 @@ class _OperationsScreenState extends State<OperationsScreen> {
   Future<void> _loadOperations() async {
     setState(() => _isLoading = true);
     try {
-      String filter;
-      if (widget.type == 'جرد') {
-        filter = 'session_type=eq.جرد';
-      } else {
-        filter = 'or=(session_type.eq.استلام,session_type.eq.تسليم)';
-      }
+      String filter = widget.type == 'جرد'
+          ? 'session_type=eq.جرد'
+          : 'or=(session_type.eq.استلام,session_type.eq.تسليم)';
       final response = await http.get(
         Uri.parse(
           '$_opsUrl/rest/v1/inventory_sessions?$filter&order=started_at.desc',
@@ -154,19 +150,314 @@ class _OperationsScreenState extends State<OperationsScreen> {
         headers: _opsHeaders,
         body: jsonEncode(data),
       );
-      if (response.statusCode == 201) await _loadAll();
+      if (response.statusCode == 201) {
+        final responseData = jsonDecode(response.body);
+        final newSession = responseData is List
+            ? responseData[0]
+            : responseData;
+        await _loadAll();
+
+        // سؤال الاستيراد
+        if (mounted) _showImportDialog(newSession);
+      }
     } catch (e) {
       debugPrint('Error: $e');
     }
   }
 
+  void _showImportDialog(Map<String, dynamic> session) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.green),
+              SizedBox(width: 8),
+              Text('تم إنشاء العملية'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${session['name']}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'هل تريد استيراد قائمة الأصناف؟',
+                style: TextStyle(color: Colors.black54),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'يمكنك استيراد ملف Excel يحتوي على الأصناف والكميات المتوقعة لهذه العملية',
+                style: TextStyle(color: Colors.black38, fontSize: 12),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _openSession(session);
+              },
+              child: const Text(
+                'تخطي — ابدأ المسح',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(context);
+                _importForSession(session);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue.shade700,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              icon: const Icon(
+                Icons.upload_file,
+                color: Colors.white,
+                size: 18,
+              ),
+              label: const Text(
+                'استيراد Excel',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openSession(Map<String, dynamic> session) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => SessionDetailScreen(session: session)),
+    ).then((_) => _loadAll());
+  }
+
+  Future<void> _importForSession(Map<String, dynamic> session) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['xlsx'],
+      withData: true,
+    );
+    if (result == null) {
+      _openSession(session);
+      return;
+    }
+
+    final bytes = result.files.first.bytes;
+    if (bytes == null) {
+      _openSession(session);
+      return;
+    }
+
+    final excel = Excel.decodeBytes(bytes);
+    final sheet = excel.tables[excel.tables.keys.first];
+    if (sheet == null) {
+      _openSession(session);
+      return;
+    }
+
+    final rows = sheet.rows;
+    if (rows.isEmpty) {
+      _openSession(session);
+      return;
+    }
+
+    final headers = rows.first
+        .map((cell) => cell?.value?.toString() ?? '')
+        .where((h) => h.isNotEmpty)
+        .toList();
+    final mappings = await _showColumnMappingDialog(headers);
+    if (mappings == null) {
+      _openSession(session);
+      return;
+    }
+
+    // شاشة التحميل
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            content: Row(
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(width: 16),
+                Text('جاري الاستيراد...'),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    int success = 0;
+    int errors = 0;
+
+    for (int i = 1; i < rows.length; i++) {
+      final row = rows[i];
+      if (row.every((cell) => cell == null || cell.value == null)) continue;
+
+      String getVal(String colName) {
+        if (colName == '__تجاهل__') return '';
+        final idx = headers.indexOf(colName);
+        if (idx == -1 || idx >= row.length) return '';
+        return row[idx]?.value?.toString() ?? '';
+      }
+
+      final barcode = getVal(mappings['barcode'] ?? '');
+      final name = getVal(mappings['name'] ?? '');
+      if (barcode.isEmpty) continue;
+
+      final product = <String, dynamic>{
+        'barcode': barcode,
+        'name': name,
+        'warehouse_id': session['warehouse_id'],
+      };
+
+      final qty = getVal(mappings['quantity'] ?? '');
+      if (qty.isNotEmpty) product['quantity'] = double.tryParse(qty) ?? 0;
+
+      final unit = getVal(mappings['unit'] ?? '');
+      if (unit.isNotEmpty) product['unit'] = unit;
+
+      try {
+        final response = await http.post(
+          Uri.parse('$_opsUrl/rest/v1/products'),
+          headers: _opsHeaders,
+          body: jsonEncode(product),
+        );
+        if (response.statusCode == 201 || response.statusCode == 200)
+          success++;
+        else
+          errors++;
+      } catch (e) {
+        errors++;
+      }
+    }
+
+    if (mounted) Navigator.pop(context); // أغلق loading
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '✅ تم استيراد $success صنف${errors > 0 ? ' | $errors أخطاء' : ''}',
+          ),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+
+    _openSession(session);
+  }
+
+  Future<Map<String, String>?> _showColumnMappingDialog(
+    List<String> headers,
+  ) async {
+    final headersWithIgnore = ['__تجاهل__', ...headers];
+    String barcodeCol = headers.isNotEmpty ? headers.first : '__تجاهل__';
+    String nameCol = headers.isNotEmpty ? headers.first : '__تجاهل__';
+    String quantityCol = '__تجاهل__';
+    String unitCol = '__تجاهل__';
+
+    return showDialog<Map<String, String>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Text('ربط الأعمدة'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'اختر العمود المناسب لكل حقل:',
+                    style: TextStyle(color: Colors.black54),
+                  ),
+                  const SizedBox(height: 16),
+                  _FieldDropdown(
+                    label: 'الباركود *',
+                    value: barcodeCol,
+                    items: headers,
+                    onChanged: (v) => setDialogState(() => barcodeCol = v!),
+                  ),
+                  const SizedBox(height: 10),
+                  _FieldDropdown(
+                    label: 'اسم المنتج *',
+                    value: nameCol,
+                    items: headers,
+                    onChanged: (v) => setDialogState(() => nameCol = v!),
+                  ),
+                  const SizedBox(height: 10),
+                  _FieldDropdown(
+                    label: 'الكمية',
+                    value: quantityCol,
+                    items: headersWithIgnore,
+                    onChanged: (v) => setDialogState(() => quantityCol = v!),
+                  ),
+                  const SizedBox(height: 10),
+                  _FieldDropdown(
+                    label: 'الوحدة',
+                    value: unitCol,
+                    items: headersWithIgnore,
+                    onChanged: (v) => setDialogState(() => unitCol = v!),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('إلغاء'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, {
+                  'barcode': barcodeCol,
+                  'name': nameCol,
+                  'quantity': quantityCol,
+                  'unit': unitCol,
+                }),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue.shade700,
+                ),
+                child: const Text(
+                  'استيراد',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   String _generateName(String type, Map<String, String> fields) {
     final date = DateTime.now().toString().substring(0, 10);
-    if (type == 'جرد') {
-      return 'جرد - ${fields['branch']} - $date';
-    } else {
-      return '$type - ${fields['branch_from']} إلى ${fields['branch_to']} - $date';
-    }
+    if (type == 'جرد') return 'جرد - ${fields['branch']} - $date';
+    return '$type - ${fields['branch_from']} إلى ${fields['branch_to']} - $date';
   }
 
   Future<void> _confirmDelete(Map<String, dynamic> op) async {
@@ -687,6 +978,44 @@ class _OperationsScreenState extends State<OperationsScreen> {
   }
 }
 
+class _FieldDropdown extends StatelessWidget {
+  final String label;
+  final String value;
+  final List<String> items;
+  final ValueChanged<String?> onChanged;
+
+  const _FieldDropdown({
+    required this.label,
+    required this.value,
+    required this.items,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<String>(
+      value: value,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      ),
+      items: items
+          .map(
+            (h) => DropdownMenuItem(
+              value: h,
+              child: Text(
+                h == '__تجاهل__' ? 'تجاهل' : h,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          )
+          .toList(),
+      onChanged: onChanged,
+    );
+  }
+}
+
 class _OperationCard extends StatelessWidget {
   final Map<String, dynamic> operation;
   final Color color;
@@ -812,7 +1141,6 @@ class _OperationCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 4),
-                    // عداد الأصناف
                     Row(
                       children: [
                         Icon(

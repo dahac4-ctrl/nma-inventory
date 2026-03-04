@@ -19,10 +19,13 @@ class ReportScreen extends StatefulWidget {
   final String sessionId;
   final String sessionName;
 
+  final String warehouseId;
+
   const ReportScreen({
     super.key,
     required this.sessionId,
     required this.sessionName,
+    required this.warehouseId,
   });
 
   @override
@@ -51,10 +54,13 @@ class _ReportScreenState extends State<ReportScreen> {
         headers: _repHeaders,
       );
 
-      // جلب المنتجات مع الكميات المتوقعة
+      // جلب المنتجات مع الكميات المتوقعة — مفلترة بالمستودع
+      final whFilter = widget.warehouseId.isNotEmpty
+          ? '&warehouse_id=eq.${widget.warehouseId}'
+          : '';
       final productsRes = await http.get(
         Uri.parse(
-          '$_repUrl/rest/v1/products?select=barcode,name,name_ar,quantity,category',
+          '$_repUrl/rest/v1/products?select=barcode,name,name_ar,quantity,category$whFilter',
         ),
         headers: _repHeaders,
       );

@@ -511,6 +511,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                             builder: (_) => ReportScreen(
                               sessionId: _session['id'],
                               sessionName: _session['name'] ?? '',
+                              warehouseId: _session['warehouse_id'] ?? '',
                             ),
                           ),
                         ),

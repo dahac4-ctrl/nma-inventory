@@ -34,7 +34,8 @@ class ScanScreen extends StatefulWidget {
   State<ScanScreen> createState() => _ScanScreenState();
 }
 
-class _ScanScreenState extends State<ScanScreen> {
+class _ScanScreenState extends State<ScanScreen>
+    with SingleTickerProviderStateMixin {
   final TextEditingController _barcodeController = TextEditingController();
   final FocusNode _barcodeFocus = FocusNode();
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -44,9 +45,23 @@ class _ScanScreenState extends State<ScanScreen> {
   bool _isOnline = true;
   int _pendingCount = 0;
 
+  // بطاقة المنتج
+  Map<String, dynamic>? _cardProduct;
+  bool _showCard = false;
+  late AnimationController _cardController;
+  late Animation<Offset> _cardAnimation;
+
   @override
   void initState() {
     super.initState();
+    _cardController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _cardAnimation = Tween<Offset>(
+      begin: const Offset(0, 1),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _cardController, curve: Curves.easeOut));
     _checkConnectivity();
     _loadExistingLines();
     Connectivity().onConnectivityChanged.listen((results) {
@@ -54,9 +69,9 @@ class _ScanScreenState extends State<ScanScreen> {
       setState(() => _isOnline = online);
       if (online) _syncPending();
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _barcodeFocus.requestFocus();
-    });
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _barcodeFocus.requestFocus(),
+    );
   }
 
   @override
@@ -64,7 +79,23 @@ class _ScanScreenState extends State<ScanScreen> {
     _barcodeController.dispose();
     _barcodeFocus.dispose();
     _audioPlayer.dispose();
+    _cardController.dispose();
     super.dispose();
+  }
+
+  void _showProductCard(Map<String, dynamic> product, int scanCount) {
+    setState(() {
+      _cardProduct = {...product, 'scanCount': scanCount};
+      _showCard = true;
+    });
+    _cardController.forward(from: 0);
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        _cardController.reverse().then((_) {
+          if (mounted) setState(() => _showCard = false);
+        });
+      }
+    });
   }
 
   Future<void> _playSound(bool success) async {
@@ -126,23 +157,23 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
-  Future<String> _getProductName(String barcode) async {
-    if (!_isOnline) return '';
+  Future<Map<String, dynamic>?> _getProductInfo(String barcode) async {
+    if (!_isOnline) return null;
     try {
       final response = await http.get(
         Uri.parse(
-          '$_supabaseUrl/rest/v1/products?barcode=eq.$barcode&select=name',
+          '$_supabaseUrl/rest/v1/products?barcode=eq.$barcode&select=name,category,unit,quantity',
         ),
         headers: _headers,
       );
       if (response.statusCode == 200) {
         final List data = jsonDecode(response.body);
-        if (data.isNotEmpty) return data.first['name'] ?? '';
+        if (data.isNotEmpty) return Map<String, dynamic>.from(data.first);
       }
     } catch (e) {
       debugPrint('Error: $e');
     }
-    return '';
+    return null;
   }
 
   Future<void> _loadExistingLines() async {
@@ -209,20 +240,18 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Future<void> _processScan(String barcode) async {
     if (barcode.isEmpty || _isProcessing) return;
-
     setState(() {
       _isProcessing = true;
       _lastScanned = barcode;
     });
 
     final settings = Provider.of<SettingsProvider>(context, listen: false);
-    final productName = await _getProductName(barcode);
-    final isKnown = productName.isNotEmpty;
+    final productInfo = await _getProductInfo(barcode);
+    final isKnown = productInfo != null;
+    final productName = isKnown ? (productInfo['name'] ?? '') : '';
 
-    // تطبيق إعداد الصنف غير المعروف
     if (!isKnown) {
       if (settings.unknownBarcodeAction == 'reject') {
-        // رفض المسح
         await _playSound(false);
         await _vibrate();
         if (mounted) {
@@ -239,14 +268,11 @@ class _ScanScreenState extends State<ScanScreen> {
         _barcodeFocus.requestFocus();
         return;
       }
-
       if (settings.unknownBarcodeAction == 'ask') {
-        // اسأل الموظف عن الاسم
         await _playSound(false);
         await _vibrate();
         final name = await _showAskNameDialog(barcode);
         if (name == null) {
-          // ألغى الموظف
           setState(() => _isProcessing = false);
           _barcodeController.clear();
           _barcodeFocus.requestFocus();
@@ -265,10 +291,24 @@ class _ScanScreenState extends State<ScanScreen> {
       }
     }
 
-    // حفظ عادي
     final finalName = isKnown ? productName : 'صنف - $barcode';
     await _playSound(isKnown);
     await _saveScan(barcode, finalName, isKnown);
+
+    // حساب عدد مرات المسح في هذه العملية
+    final scanCount = _scannedItems
+        .where((i) => i['barcode'] == barcode)
+        .length;
+
+    // إظهار البطاقة
+    if (isKnown && productInfo != null) {
+      _showProductCard({
+        'name': productName,
+        'barcode': barcode,
+        'category': productInfo['category'] ?? '',
+        'unit': productInfo['unit'] ?? '',
+      }, scanCount);
+    }
 
     setState(() => _isProcessing = false);
     _barcodeController.clear();
@@ -324,7 +364,6 @@ class _ScanScreenState extends State<ScanScreen> {
   Future<void> _saveScan(String barcode, String name, bool isKnown) async {
     final now = DateTime.now();
     final nowStr = now.toIso8601String();
-
     if (_isOnline) {
       try {
         final response = await http.post(
@@ -449,171 +488,287 @@ class _ScanScreenState extends State<ScanScreen> {
             ),
           ],
         ),
-        body: Column(
+        body: Stack(
           children: [
-            if (!_isOnline)
-              Container(
-                width: double.infinity,
-                color: Colors.orange.shade100,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.info_outline,
-                      color: Colors.orange,
-                      size: 18,
+            Column(
+              children: [
+                if (!_isOnline)
+                  Container(
+                    width: double.infinity,
+                    color: Colors.orange.shade100,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'وضع عدم الاتصال — البيانات محفوظة محلياً وستُرفع تلقائياً عند الاتصال',
-                        style: TextStyle(
-                          color: Colors.orange.shade800,
-                          fontSize: 12,
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.info_outline,
+                          color: Colors.orange,
+                          size: 18,
                         ),
-                      ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'وضع عدم الاتصال — البيانات محفوظة محلياً وستُرفع تلقائياً عند الاتصال',
+                            style: TextStyle(
+                              color: Colors.orange.shade800,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
+                Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: _barcodeController,
+                        focusNode: _barcodeFocus,
+                        textDirection: TextDirection.ltr,
+                        decoration: InputDecoration(
+                          labelText: 'امسح الباركود أو اكتبه',
+                          hintText: '← اكتب ثم اضغط Enter',
+                          prefixIcon: const Icon(
+                            Icons.qr_code_scanner,
+                            color: Colors.blue,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: Colors.blue.shade700,
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                        onSubmitted: _processScan,
+                        textInputAction: TextInputAction.done,
+                      ),
+                      const SizedBox(height: 12),
+                      if (_lastScanned.isNotEmpty)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: Colors.green.withOpacity(0.3),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.check_circle,
+                                color: Colors.green,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'آخر مسح: $_lastScanned',
+                                style: const TextStyle(
+                                  color: Colors.green,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-            Container(
-              color: Colors.white,
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _barcodeController,
-                    focusNode: _barcodeFocus,
-                    textDirection: TextDirection.ltr,
-                    decoration: InputDecoration(
-                      labelText: 'امسح الباركود أو اكتبه',
-                      hintText: '← اكتب ثم اضغط Enter',
-                      prefixIcon: const Icon(
-                        Icons.qr_code_scanner,
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    children: [
+                      _StatChip(
+                        label: 'عمليات المسح',
+                        value: '${_scannedItems.length}',
                         color: Colors.blue,
                       ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
+                      const SizedBox(width: 8),
+                      _StatChip(
+                        label: 'أصناف مختلفة',
+                        value:
+                            '${_scannedItems.map((e) => e['barcode']).toSet().length}',
+                        color: Colors.green,
                       ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Colors.blue.shade700,
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                    onSubmitted: _processScan,
-                    textInputAction: TextInputAction.done,
+                    ],
                   ),
-                  const SizedBox(height: 12),
-                  if (_lastScanned.isNotEmpty)
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: Colors.green.withOpacity(0.3),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.check_circle,
-                            color: Colors.green,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'آخر مسح: $_lastScanned',
-                            style: const TextStyle(
-                              color: Colors.green,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
-                children: [
-                  _StatChip(
-                    label: 'عمليات المسح',
-                    value: '${_scannedItems.length}',
-                    color: Colors.blue,
-                  ),
-                  const SizedBox(width: 8),
-                  _StatChip(
-                    label: 'أصناف مختلفة',
-                    value:
-                        '${_scannedItems.map((e) => e['barcode']).toSet().length}',
-                    color: Colors.green,
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: _scannedItems.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.qr_code_scanner,
-                            size: 80,
-                            color: Colors.grey.shade300,
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'ابدأ المسح',
-                            style: TextStyle(
-                              fontSize: 20,
-                              color: Colors.grey.shade400,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'اكتب الباركود واضغط Enter',
-                            style: TextStyle(color: Colors.grey.shade400),
-                          ),
-                        ],
-                      ),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: _scannedItems.length,
-                      itemBuilder: (context, index) {
-                        final item = _scannedItems[index];
-                        return _ScannedItemCard(
-                          item: item,
-                          onDelete: () async {
-                            if (item['synced'] == true && item['id'] != null) {
-                              await http.delete(
-                                Uri.parse(
-                                  '$_supabaseUrl/rest/v1/inventory_lines?id=eq.${item['id']}',
+                ),
+                Expanded(
+                  child: _scannedItems.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.qr_code_scanner,
+                                size: 80,
+                                color: Colors.grey.shade300,
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                'ابدأ المسح',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  color: Colors.grey.shade400,
+                                  fontWeight: FontWeight.bold,
                                 ),
-                                headers: _headers,
-                              );
-                            } else if (item['local_id'] != null) {
-                              await LocalDb.deleteScan(item['local_id'] as int);
-                              setState(() => _pendingCount--);
-                            }
-                            setState(() => _scannedItems.removeAt(index));
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'اكتب الباركود واضغط Enter',
+                                style: TextStyle(color: Colors.grey.shade400),
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+                          itemCount: _scannedItems.length,
+                          itemBuilder: (context, index) {
+                            final item = _scannedItems[index];
+                            return _ScannedItemCard(
+                              item: item,
+                              onDelete: () async {
+                                if (item['synced'] == true &&
+                                    item['id'] != null) {
+                                  await http.delete(
+                                    Uri.parse(
+                                      '$_supabaseUrl/rest/v1/inventory_lines?id=eq.${item['id']}',
+                                    ),
+                                    headers: _headers,
+                                  );
+                                } else if (item['local_id'] != null) {
+                                  await LocalDb.deleteScan(
+                                    item['local_id'] as int,
+                                  );
+                                  setState(() => _pendingCount--);
+                                }
+                                setState(() => _scannedItems.removeAt(index));
+                              },
+                            );
                           },
-                        );
-                      },
-                    ),
+                        ),
+                ),
+              ],
             ),
+
+            // بطاقة المنتج
+            if (_showCard && _cardProduct != null)
+              Positioned(
+                bottom: 16,
+                left: 16,
+                right: 16,
+                child: SlideTransition(
+                  position: _cardAnimation,
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.15),
+                          blurRadius: 20,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                      border: Border.all(color: Colors.blue.withOpacity(0.2)),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 50,
+                          height: 50,
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.inventory_2,
+                            color: Colors.blue,
+                            size: 28,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _cardProduct!['name'] ?? '',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _cardProduct!['barcode'] ?? '',
+                                style: const TextStyle(
+                                  color: Colors.black45,
+                                  fontSize: 11,
+                                ),
+                                textDirection: TextDirection.ltr,
+                              ),
+                              if ((_cardProduct!['category'] ?? '').isNotEmpty)
+                                Text(
+                                  _cardProduct!['category'],
+                                  style: const TextStyle(
+                                    color: Colors.black38,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.shade700,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Column(
+                            children: [
+                              Text(
+                                '${_cardProduct!['scanCount']}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 18,
+                                ),
+                              ),
+                              const Text(
+                                'مسح',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

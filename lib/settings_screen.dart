@@ -12,7 +12,7 @@ class SettingsScreen extends StatelessWidget {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF0F2F5),
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         appBar: AppBar(
           backgroundColor: Colors.blue.shade700,
           title: const Text(
@@ -247,7 +247,9 @@ class _OptionTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: selected ? color.withOpacity(0.1) : Colors.grey.shade50,
+          color: selected
+              ? color.withOpacity(0.1)
+              : Theme.of(context).cardColor,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: selected ? color : Colors.grey.shade200,
@@ -256,14 +258,22 @@ class _OptionTile extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Icon(icon, size: 18, color: selected ? color : Colors.grey),
+            Icon(
+              icon,
+              size: 18,
+              color: selected
+                  ? color
+                  : Theme.of(context).iconTheme.color ?? Colors.grey,
+            ),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
                 label,
                 style: TextStyle(
                   fontSize: 13,
-                  color: selected ? color : Colors.black54,
+                  color: selected
+                      ? color
+                      : Theme.of(context).textTheme.bodyMedium?.color,
                   fontWeight: selected ? FontWeight.bold : FontWeight.normal,
                 ),
               ),
