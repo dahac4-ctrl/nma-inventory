@@ -128,13 +128,22 @@ class HomeScreen extends StatelessWidget {
         backgroundColor: const Color(0xFFF0F2F5),
         appBar: AppBar(
           backgroundColor: Colors.blue.shade700,
-          title: const Text(
-            'NMA نظام المخزون',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 20,
-            ),
+          title: const Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                'عمليات المخزون',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                ),
+              ),
+              Text(
+                'NMA Inventory Operations',
+                style: TextStyle(color: Colors.white70, fontSize: 15),
+              ),
+            ],
           ),
           centerTitle: true,
         ),

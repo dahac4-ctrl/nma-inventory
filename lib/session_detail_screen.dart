@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:excel/excel.dart' hide Border;
-// ignore: avoid_web_libraries_in_flutter
-import 'dart:html' as html;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'scan_screen.dart';
+import 'web_download.dart';
 
 const _supabaseUrl = 'https://zcwkvadhdxwpdrjidwea.supabase.co';
 const _supabaseKey = 'sb_publishable_mnREAEDOrm_vnZTg4cUhlQ_r2zyl9IL';
@@ -20,7 +23,6 @@ Map<String, String> get _headers => {
 
 class SessionDetailScreen extends StatefulWidget {
   final Map<String, dynamic> session;
-
   const SessionDetailScreen({super.key, required this.session});
 
   @override
@@ -56,9 +58,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       );
       if (response.statusCode == 200) {
         final List data = jsonDecode(response.body);
-        if (data.isNotEmpty) {
-          _session = Map.from(data.first);
-        }
+        if (data.isNotEmpty) _session = Map.from(data.first);
       }
     } catch (e) {
       debugPrint('Error refreshing session: $e');
@@ -90,11 +90,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   Future<void> _exportExcel() async {
     setState(() => _isExporting = true);
-
     try {
       final excel = Excel.createExcel();
-
-      // ===== ورقة 1: الملخص =====
       final summary = excel['الملخص'];
       excel.setDefaultSheet('الملخص');
 
@@ -107,7 +104,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       final customName = _session['custom_field_name'] ?? '';
       final customValue = _session['custom_field_value'] ?? '';
 
-      // معلومات العملية
       summary.cell(CellIndex.indexByString('A1')).value = TextCellValue(
         'تقرير عملية: ${_session['name']}',
       );
@@ -138,7 +134,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           '$customName: $customValue',
         );
 
-      // رؤوس الأعمدة
       summary.cell(CellIndex.indexByString('A9')).value = TextCellValue(
         'الباركود',
       );
@@ -149,7 +144,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         'إجمالي الكمية',
       );
 
-      // تجميع الكميات
       final Map<String, Map<String, dynamic>> grouped = {};
       for (final line in _lines) {
         final barcode = line['barcode'] ?? '';
@@ -176,9 +170,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         row++;
       });
 
-      // ===== ورقة 2: السجل الكامل =====
       final history = excel['السجل الكامل'];
-
       history.cell(CellIndex.indexByString('A1')).value = TextCellValue(
         'الباركود',
       );
@@ -200,7 +192,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         final scannedAt = line['scanned_at']?.toString() ?? '';
         final date = scannedAt.length >= 10 ? scannedAt.substring(0, 10) : '';
         final time = scannedAt.length >= 19 ? scannedAt.substring(11, 16) : '';
-
         history.cell(CellIndex.indexByString('A$hRow')).value = TextCellValue(
           line['barcode'] ?? '',
         );
@@ -219,26 +210,26 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         hRow++;
       }
 
-      // حذف الورقة الافتراضية
       excel.delete('Sheet1');
-
-      // تحميل الملف
       final bytes = excel.encode()!;
-      final blob = html.Blob([bytes]);
-      final url = html.Url.createObjectUrlFromBlob(blob);
-      html.AnchorElement(href: url)
-        ..setAttribute('download', 'عملية_${_session['name']}.xlsx')
-        ..click();
-      html.Url.revokeObjectUrl(url);
+      final fileName = 'عملية_${_session['name']}.xlsx';
+
+      if (kIsWeb) {
+        downloadExcelWeb(bytes, fileName);
+      } else {
+        final dir = await getTemporaryDirectory();
+        final filePath = '${dir.path}/$fileName';
+        final file = File(filePath);
+        await file.writeAsBytes(bytes);
+        await Share.shareXFiles([XFile(filePath)], text: fileName);
+      }
     } catch (e) {
       debugPrint('Export error: $e');
-      if (mounted) {
+      if (mounted)
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('خطأ في التصدير: $e')));
-      }
     }
-
     setState(() => _isExporting = false);
   }
 
@@ -417,16 +408,15 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                       _InfoRow(
                         icon: Icons.category,
                         label: 'أصناف مختلفة',
-                        value: '$uniqueProducts صنف',
+                        value:
+                            '$uniqueProducts ${uniqueProducts == 1 ? 'صنف' : 'أصناف'}',
                         valueColor: Colors.green,
                       ),
                     ],
                   ),
                 ),
               ),
-
               const SizedBox(height: 16),
-
               if (isOpen) ...[
                 SizedBox(
                   width: double.infinity,
@@ -506,9 +496,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   ),
                 ),
               ],
-
               const SizedBox(height: 12),
-
               SizedBox(
                 width: double.infinity,
                 height: 48,
@@ -538,9 +526,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   ),
                 ),
               ),
-
               const SizedBox(height: 16),
-
               const Align(
                 alignment: Alignment.centerRight,
                 child: Text(
@@ -552,31 +538,31 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   ),
                 ),
               ),
-
               const SizedBox(height: 8),
-
               Expanded(
                 child: _isLoading
                     ? const Center(child: CircularProgressIndicator())
                     : _lines.isEmpty
                     ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.history,
-                              size: 60,
-                              color: Colors.grey.shade300,
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              'لا توجد عمليات مسح بعد',
-                              style: TextStyle(
-                                color: Colors.grey.shade400,
-                                fontSize: 16,
+                        child: SingleChildScrollView(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.history,
+                                size: 60,
+                                color: Colors.grey.shade300,
                               ),
-                            ),
-                          ],
+                              const SizedBox(height: 12),
+                              Text(
+                                'لا توجد عمليات مسح بعد',
+                                style: TextStyle(
+                                  color: Colors.grey.shade400,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       )
                     : ListView.builder(
