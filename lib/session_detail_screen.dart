@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'scan_screen.dart';
 import 'web_download.dart';
+import 'report_screen.dart';
 
 const _supabaseUrl = 'https://zcwkvadhdxwpdrjidwea.supabase.co';
 const _supabaseKey = 'sb_publishable_mnREAEDOrm_vnZTg4cUhlQ_r2zyl9IL';
@@ -497,6 +498,37 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 ),
               ],
               const SizedBox(height: 12),
+              // زر تقرير المقارنة
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton.icon(
+                  onPressed: _lines.isEmpty
+                      ? null
+                      : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ReportScreen(
+                              sessionId: _session['id'],
+                              sessionName: _session['name'] ?? '',
+                            ),
+                          ),
+                        ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.purple.shade600,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.compare_arrows, color: Colors.white),
+                  label: const Text(
+                    'تقرير المقارنة',
+                    style: TextStyle(color: Colors.white, fontSize: 16),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              // زر تصدير Excel
               SizedBox(
                 width: double.infinity,
                 height: 48,

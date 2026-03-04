@@ -1,9 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'products_screen.dart';
 import 'operations_screen.dart';
+import 'settings_screen.dart';
+import 'settings_provider.dart';
 
 void main() {
-  runApp(const NMAApp());
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => SettingsProvider(),
+      child: const NMAApp(),
+    ),
+  );
 }
 
 class NMAApp extends StatelessWidget {
@@ -11,13 +19,24 @@ class NMAApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final settings = Provider.of<SettingsProvider>(context);
     return MaterialApp(
       title: 'NMA Inventory',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
+        brightness: Brightness.light,
       ),
+      darkTheme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.blue,
+          brightness: Brightness.dark,
+        ),
+        useMaterial3: true,
+        brightness: Brightness.dark,
+      ),
+      themeMode: settings.darkMode ? ThemeMode.dark : ThemeMode.light,
       home: const SplashScreen(),
     );
   }
@@ -47,16 +66,14 @@ class _SplashScreenState extends State<SplashScreen>
       end: 1,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeIn));
     _controller.forward();
-
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted) {
         Navigator.pushReplacement(
           context,
           PageRouteBuilder(
             pageBuilder: (_, __, ___) => const HomeScreen(),
-            transitionsBuilder: (_, animation, __, child) {
-              return FadeTransition(opacity: animation, child: child);
-            },
+            transitionsBuilder: (_, animation, __, child) =>
+                FadeTransition(opacity: animation, child: child),
             transitionDuration: const Duration(milliseconds: 800),
           ),
         );
@@ -141,11 +158,20 @@ class HomeScreen extends StatelessWidget {
               ),
               Text(
                 'NMA Inventory Operations',
-                style: TextStyle(color: Colors.white70, fontSize: 15),
+                style: TextStyle(color: Colors.white70, fontSize: 12),
               ),
             ],
           ),
           centerTitle: true,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.settings, color: Colors.white),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              ),
+            ),
+          ],
         ),
         body: Padding(
           padding: const EdgeInsets.all(16),
@@ -205,11 +231,16 @@ class HomeScreen extends StatelessWidget {
                       ),
                     ),
                     MenuCard(
-                      icon: Icons.bar_chart,
-                      title: 'التقارير',
-                      subtitle: 'قريباً',
+                      icon: Icons.settings,
+                      title: 'الإعدادات',
+                      subtitle: 'تخصيص التطبيق',
                       color: Colors.purple,
-                      onTap: () {},
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const SettingsScreen(),
+                        ),
+                      ),
                     ),
                   ],
                 ),
