@@ -4,7 +4,9 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:provider/provider.dart';
 import 'local_db.dart';
+import 'settings_provider.dart';
 
 const _supabaseUrl = 'https://zcwkvadhdxwpdrjidwea.supabase.co';
 const _supabaseKey = 'sb_publishable_mnREAEDOrm_vnZTg4cUhlQ_r2zyl9IL';
@@ -66,11 +68,19 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _playSound(bool success) async {
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
+    if (!settings.soundEnabled) return;
     await _audioPlayer.play(
       AssetSource(
         success ? 'sounds/beep_success.wav' : 'sounds/beep_warning.wav',
       ),
     );
+  }
+
+  Future<void> _vibrate() async {
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
+    if (!settings.vibrationEnabled) return;
+    HapticFeedback.lightImpact();
   }
 
   Future<void> _checkConnectivity() async {
@@ -84,7 +94,6 @@ class _ScanScreenState extends State<ScanScreen> {
   Future<void> _syncPending() async {
     final pending = await LocalDb.getAllPending();
     if (pending.isEmpty) return;
-
     for (final scan in pending) {
       try {
         final response = await http.post(
@@ -98,17 +107,14 @@ class _ScanScreenState extends State<ScanScreen> {
             'scanned_at': scan['scanned_at'],
           }),
         );
-        if (response.statusCode == 201) {
+        if (response.statusCode == 201)
           await LocalDb.markSynced(scan['id'] as int);
-        }
       } catch (e) {
         debugPrint('Sync error: $e');
       }
     }
-
     final remaining = await LocalDb.getAllPending();
     setState(() => _pendingCount = remaining.length);
-
     if (remaining.isEmpty && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -194,7 +200,6 @@ class _ScanScreenState extends State<ScanScreen> {
           }
         });
       }
-
       final pending = await LocalDb.getAllPending();
       setState(() => _pendingCount = pending.length);
     } catch (e) {
@@ -210,12 +215,113 @@ class _ScanScreenState extends State<ScanScreen> {
       _lastScanned = barcode;
     });
 
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
     final productName = await _getProductName(barcode);
     final isKnown = productName.isNotEmpty;
+
+    // تطبيق إعداد الصنف غير المعروف
+    if (!isKnown) {
+      if (settings.unknownBarcodeAction == 'reject') {
+        // رفض المسح
+        await _playSound(false);
+        await _vibrate();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('⛔ تم رفض المسح — الصنف غير معروف'),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        setState(() => _isProcessing = false);
+        _barcodeController.clear();
+        _barcodeFocus.requestFocus();
+        return;
+      }
+
+      if (settings.unknownBarcodeAction == 'ask') {
+        // اسأل الموظف عن الاسم
+        await _playSound(false);
+        await _vibrate();
+        final name = await _showAskNameDialog(barcode);
+        if (name == null) {
+          // ألغى الموظف
+          setState(() => _isProcessing = false);
+          _barcodeController.clear();
+          _barcodeFocus.requestFocus();
+          return;
+        }
+        await _saveScan(
+          barcode,
+          name.isNotEmpty ? name : 'صنف - $barcode',
+          false,
+        );
+        setState(() => _isProcessing = false);
+        _barcodeController.clear();
+        _barcodeFocus.requestFocus();
+        await _vibrate();
+        return;
+      }
+    }
+
+    // حفظ عادي
     final finalName = isKnown ? productName : 'صنف - $barcode';
-
     await _playSound(isKnown);
+    await _saveScan(barcode, finalName, isKnown);
 
+    setState(() => _isProcessing = false);
+    _barcodeController.clear();
+    _barcodeFocus.requestFocus();
+    await _vibrate();
+  }
+
+  Future<String?> _showAskNameDialog(String barcode) async {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('صنف غير معروف'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'الباركود: $barcode',
+                style: const TextStyle(color: Colors.black45, fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'اسم الصنف (اختياري)',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: const Text('إلغاء', style: TextStyle(color: Colors.red)),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, controller.text),
+              child: const Text('حفظ'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveScan(String barcode, String name, bool isKnown) async {
     final now = DateTime.now();
     final nowStr = now.toIso8601String();
 
@@ -227,7 +333,7 @@ class _ScanScreenState extends State<ScanScreen> {
           body: jsonEncode({
             'session_id': widget.sessionId,
             'barcode': barcode,
-            'product_name': finalName,
+            'product_name': name,
             'scanned_qty': 1,
             'scanned_at': nowStr,
           }),
@@ -238,7 +344,7 @@ class _ScanScreenState extends State<ScanScreen> {
           setState(() {
             _scannedItems.insert(0, {
               'barcode': barcode,
-              'name': finalName,
+              'name': name,
               'qty': 1,
               'time': now.toString().substring(11, 16),
               'date': now.toString().substring(0, 10),
@@ -256,7 +362,7 @@ class _ScanScreenState extends State<ScanScreen> {
       final localId = await LocalDb.insertScan({
         'session_id': widget.sessionId,
         'barcode': barcode,
-        'product_name': finalName,
+        'product_name': name,
         'scanned_qty': 1,
         'scanned_at': nowStr,
         'synced': 0,
@@ -264,7 +370,7 @@ class _ScanScreenState extends State<ScanScreen> {
       setState(() {
         _scannedItems.insert(0, {
           'barcode': barcode,
-          'name': finalName,
+          'name': name,
           'qty': 1,
           'time': now.toString().substring(11, 16),
           'date': now.toString().substring(0, 10),
@@ -276,11 +382,6 @@ class _ScanScreenState extends State<ScanScreen> {
         _pendingCount++;
       });
     }
-
-    setState(() => _isProcessing = false);
-    _barcodeController.clear();
-    _barcodeFocus.requestFocus();
-    HapticFeedback.lightImpact();
   }
 
   @override

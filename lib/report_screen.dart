@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:provider/provider.dart';
+import 'settings_provider.dart';
 
 const _repUrl = 'https://zcwkvadhdxwpdrjidwea.supabase.co';
 const _repKey = 'sb_publishable_mnREAEDOrm_vnZTg4cUhlQ_r2zyl9IL';
@@ -130,14 +132,25 @@ class _ReportScreenState extends State<ReportScreen> {
   }
 
   List<Map<String, dynamic>> get _filtered {
-    if (_filter == 'الكل') return _report;
+    final settings = Provider.of<SettingsProvider>(context, listen: false);
+    List<Map<String, dynamic>> result = _report;
+
+    // تطبيق إعدادات التقرير
+    if (!settings.showUnknown) {
+      result = result.where((r) => (r['expected'] as int) > 0).toList();
+    }
+    if (!settings.showMatching) {
+      result = result.where((r) => (r['diff'] as int) != 0).toList();
+    }
+
+    if (_filter == 'الكل') return result;
     if (_filter == 'ناقص')
-      return _report.where((r) => (r['diff'] as int) < 0).toList();
+      return result.where((r) => (r['diff'] as int) < 0).toList();
     if (_filter == 'زيادة')
-      return _report.where((r) => (r['diff'] as int) > 0).toList();
+      return result.where((r) => (r['diff'] as int) > 0).toList();
     if (_filter == 'مطابق')
-      return _report.where((r) => (r['diff'] as int) == 0).toList();
-    return _report;
+      return result.where((r) => (r['diff'] as int) == 0).toList();
+    return result;
   }
 
   int get _totalExpected =>
