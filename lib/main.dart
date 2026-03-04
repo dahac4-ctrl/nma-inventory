@@ -4,6 +4,7 @@ import 'products_screen.dart';
 import 'operations_screen.dart';
 import 'settings_screen.dart';
 import 'settings_provider.dart';
+import 'login_screen.dart';
 
 void main() {
   runApp(
@@ -41,7 +42,7 @@ class NMAApp extends StatelessWidget {
         cardColor: const Color(0xFF1E1E1E),
       ),
       themeMode: settings.darkMode ? ThemeMode.dark : ThemeMode.light,
-      home: const SplashScreen(),
+      home: const LoginScreen(),
     );
   }
 }
@@ -222,18 +223,7 @@ class HomeScreen extends StatelessWidget {
                         ),
                       ),
                     ),
-                    MenuCard(
-                      icon: Icons.category,
-                      title: 'الأصناف',
-                      subtitle: 'استيراد / إدارة',
-                      color: Colors.green,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const ProductsScreen(),
-                        ),
-                      ),
-                    ),
+
                     MenuCard(
                       icon: Icons.settings,
                       title: 'الإعدادات',

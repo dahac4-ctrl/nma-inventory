@@ -168,11 +168,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
     setState(() {
       _importing = true;
-      _status = 'جاري الاستيراد...';
+      _status = 'جاري تحضير البيانات...';
     });
 
-    int success = 0;
-    int errors = 0;
+    // بناء كل المنتجات دفعة واحدة
+    final List<Map<String, dynamic>> products = [];
 
     for (int i = 1; i < rows.length; i++) {
       final row = rows[i];
@@ -213,21 +213,44 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
       if (extraFields.isNotEmpty) product['extra_fields'] = extraFields;
 
+      products.add(product);
+    }
+
+    if (products.isEmpty) {
+      setState(() {
+        _importing = false;
+        _status = 'لا توجد بيانات للاستيراد';
+      });
+      return;
+    }
+
+    setState(() => _status = 'جاري رفع ${products.length} منتج...');
+
+    // إرسال دفعات بحجم 500 لكل مرة
+    int success = 0;
+    int errors = 0;
+    const batchSize = 500;
+
+    for (int i = 0; i < products.length; i += batchSize) {
+      final batch = products.sublist(
+        i,
+        i + batchSize > products.length ? products.length : i + batchSize,
+      );
       try {
         final response = await http.post(
           Uri.parse(_apiUrl),
-          headers: _reqHeaders,
-          body: jsonEncode(product),
+          headers: {..._reqHeaders, 'Prefer': 'return=minimal'},
+          body: jsonEncode(batch),
         );
-        if (response.statusCode == 201 || response.statusCode == 200)
-          success++;
-        else
-          errors++;
+        if (response.statusCode == 201 || response.statusCode == 200) {
+          success += batch.length;
+        } else {
+          errors += batch.length;
+        }
       } catch (e) {
-        errors++;
+        errors += batch.length;
       }
-
-      setState(() => _status = 'تم استيراد $success منتج...');
+      setState(() => _status = 'تم رفع $success من ${products.length}...');
     }
 
     setState(() {
