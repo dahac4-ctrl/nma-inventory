@@ -20,7 +20,7 @@ dependencies:
   share_plus: ^12.0.1
   sqflite: ^2.3.3
   connectivity_plus: ^6.1.1
-
+  audioplayers: ^6.1.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -31,7 +31,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/icon/
-
+    - assets/sounds/
 flutter_launcher_icons:
   android: true
   ios: true
