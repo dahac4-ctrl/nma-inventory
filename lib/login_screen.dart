@@ -95,7 +95,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        backgroundColor: Colors.blue.shade700,
+        backgroundColor: const Color.fromARGB(255, 110, 158, 207),
         body: SafeArea(
           child: Center(
             child: SingleChildScrollView(
@@ -104,35 +104,26 @@ class _LoginScreenState extends State<LoginScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   // اللوغو
-                  Container(
-                    width: 90,
-                    height: 90,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: const Center(
-                      child: Text(
-                        'NMA',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 32,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 4,
-                        ),
-                      ),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: Image.asset(
+                      'assets/images/uisk.png',
+                      width: 300,
+                      height: 300,
+                      fit: BoxFit.contain,
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 4),
                   const Text(
                     'Inventory Management',
                     style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 16,
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w600,
                       letterSpacing: 1,
                     ),
                   ),
-                  const SizedBox(height: 48),
+                  const SizedBox(height: 24),
 
                   // بطاقة الدخول
                   Container(
