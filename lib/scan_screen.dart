@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'local_db.dart';
 
 const _supabaseUrl = 'https://zcwkvadhdxwpdrjidwea.supabase.co';
 const _supabaseKey = 'sb_publishable_mnREAEDOrm_vnZTg4cUhlQ_r2zyl9IL';
@@ -35,11 +37,19 @@ class _ScanScreenState extends State<ScanScreen> {
   final List<Map<String, dynamic>> _scannedItems = [];
   String _lastScanned = '';
   bool _isProcessing = false;
+  bool _isOnline = true;
+  int _pendingCount = 0;
 
   @override
   void initState() {
     super.initState();
+    _checkConnectivity();
     _loadExistingLines();
+    Connectivity().onConnectivityChanged.listen((results) {
+      final online = results.any((r) => r != ConnectivityResult.none);
+      setState(() => _isOnline = online);
+      if (online) _syncPending();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _barcodeFocus.requestFocus();
     });
@@ -52,7 +62,55 @@ class _ScanScreenState extends State<ScanScreen> {
     super.dispose();
   }
 
+  Future<void> _checkConnectivity() async {
+    final results = await Connectivity().checkConnectivity();
+    setState(
+      () => _isOnline = results.any((r) => r != ConnectivityResult.none),
+    );
+    if (_isOnline) _syncPending();
+  }
+
+  Future<void> _syncPending() async {
+    final pending = await LocalDb.getAllPending();
+    if (pending.isEmpty) return;
+
+    for (final scan in pending) {
+      try {
+        final response = await http.post(
+          Uri.parse('$_supabaseUrl/rest/v1/inventory_lines'),
+          headers: _headers,
+          body: jsonEncode({
+            'session_id': scan['session_id'],
+            'barcode': scan['barcode'],
+            'product_name': scan['product_name'],
+            'scanned_qty': scan['scanned_qty'],
+            'scanned_at': scan['scanned_at'],
+          }),
+        );
+        if (response.statusCode == 201) {
+          await LocalDb.markSynced(scan['id'] as int);
+        }
+      } catch (e) {
+        debugPrint('Sync error: $e');
+      }
+    }
+
+    final remaining = await LocalDb.getAllPending();
+    setState(() => _pendingCount = remaining.length);
+
+    if (remaining.isEmpty && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ تم مزامنة جميع البيانات'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   Future<String> _getProductName(String barcode) async {
+    if (!_isOnline) return 'صنف - $barcode';
     try {
       final response = await http.get(
         Uri.parse(
@@ -72,32 +130,62 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Future<void> _loadExistingLines() async {
     try {
-      final response = await http.get(
-        Uri.parse(
-          '$_supabaseUrl/rest/v1/inventory_lines?session_id=eq.${widget.sessionId}&order=scanned_at.desc',
-        ),
-        headers: _headers,
-      );
-      if (response.statusCode == 200) {
-        final List data = jsonDecode(response.body);
+      if (_isOnline) {
+        final response = await http.get(
+          Uri.parse(
+            '$_supabaseUrl/rest/v1/inventory_lines?session_id=eq.${widget.sessionId}&order=scanned_at.desc',
+          ),
+          headers: _headers,
+        );
+        if (response.statusCode == 200) {
+          final List data = jsonDecode(response.body);
+          setState(() {
+            _scannedItems.clear();
+            for (var line in data) {
+              _scannedItems.add({
+                'barcode': line['barcode'],
+                'name': line['product_name'] ?? 'صنف - ${line['barcode']}',
+                'qty': line['scanned_qty'] ?? 1,
+                'time': line['scanned_at'] != null
+                    ? line['scanned_at'].toString().substring(11, 16)
+                    : '',
+                'date': line['scanned_at'] != null
+                    ? line['scanned_at'].toString().substring(0, 10)
+                    : '',
+                'id': line['id'],
+                'local_id': null,
+                'synced': true,
+              });
+            }
+          });
+        }
+      } else {
+        // تحميل من SQLite
+        final pending = await LocalDb.getPendingScans(widget.sessionId);
         setState(() {
           _scannedItems.clear();
-          for (var line in data) {
+          for (var scan in pending) {
             _scannedItems.add({
-              'barcode': line['barcode'],
-              'name': line['product_name'] ?? 'صنف - ${line['barcode']}',
-              'qty': line['scanned_qty'] ?? 1,
-              'time': line['scanned_at'] != null
-                  ? line['scanned_at'].toString().substring(11, 16)
+              'barcode': scan['barcode'],
+              'name': scan['product_name'] ?? 'صنف - ${scan['barcode']}',
+              'qty': scan['scanned_qty'] ?? 1,
+              'time': scan['scanned_at'].toString().length >= 19
+                  ? scan['scanned_at'].toString().substring(11, 16)
                   : '',
-              'date': line['scanned_at'] != null
-                  ? line['scanned_at'].toString().substring(0, 10)
+              'date': scan['scanned_at'].toString().length >= 10
+                  ? scan['scanned_at'].toString().substring(0, 10)
                   : '',
-              'id': line['id'],
+              'id': null,
+              'local_id': scan['id'],
+              'synced': false,
             });
           }
         });
       }
+
+      // عدد الانتظار
+      final pending = await LocalDb.getAllPending();
+      setState(() => _pendingCount = pending.length);
     } catch (e) {
       debugPrint('Error loading lines: $e');
     }
@@ -111,39 +199,66 @@ class _ScanScreenState extends State<ScanScreen> {
       _lastScanned = barcode;
     });
 
-    try {
-      // كل مسح = سطر جديد
-      final productName = await _getProductName(barcode);
-      final now = DateTime.now();
+    final productName = await _getProductName(barcode);
+    final now = DateTime.now();
+    final nowStr = now.toIso8601String();
 
-      final response = await http.post(
-        Uri.parse('$_supabaseUrl/rest/v1/inventory_lines'),
-        headers: _headers,
-        body: jsonEncode({
-          'session_id': widget.sessionId,
-          'barcode': barcode,
-          'product_name': productName,
-          'scanned_qty': 1,
-          'scanned_at': now.toIso8601String(),
-        }),
-      );
-
-      if (response.statusCode == 201) {
-        final data = jsonDecode(response.body);
-        final newLine = data is List ? data[0] : data;
-        setState(() {
-          _scannedItems.insert(0, {
+    if (_isOnline) {
+      // حفظ مباشر في Supabase
+      try {
+        final response = await http.post(
+          Uri.parse('$_supabaseUrl/rest/v1/inventory_lines'),
+          headers: _headers,
+          body: jsonEncode({
+            'session_id': widget.sessionId,
             'barcode': barcode,
-            'name': productName,
-            'qty': 1,
-            'time': now.toString().substring(11, 16),
-            'date': now.toString().substring(0, 10),
-            'id': newLine['id'],
+            'product_name': productName,
+            'scanned_qty': 1,
+            'scanned_at': nowStr,
+          }),
+        );
+        if (response.statusCode == 201) {
+          final data = jsonDecode(response.body);
+          final newLine = data is List ? data[0] : data;
+          setState(() {
+            _scannedItems.insert(0, {
+              'barcode': barcode,
+              'name': productName,
+              'qty': 1,
+              'time': now.toString().substring(11, 16),
+              'date': now.toString().substring(0, 10),
+              'id': newLine['id'],
+              'local_id': null,
+              'synced': true,
+            });
           });
-        });
+        }
+      } catch (e) {
+        debugPrint('Error saving scan: $e');
       }
-    } catch (e) {
-      debugPrint('Error saving scan: $e');
+    } else {
+      // حفظ محلي في SQLite
+      final localId = await LocalDb.insertScan({
+        'session_id': widget.sessionId,
+        'barcode': barcode,
+        'product_name': productName,
+        'scanned_qty': 1,
+        'scanned_at': nowStr,
+        'synced': 0,
+      });
+      setState(() {
+        _scannedItems.insert(0, {
+          'barcode': barcode,
+          'name': productName,
+          'qty': 1,
+          'time': now.toString().substring(11, 16),
+          'date': now.toString().substring(0, 10),
+          'id': null,
+          'local_id': localId,
+          'synced': false,
+        });
+        _pendingCount++;
+      });
     }
 
     setState(() => _isProcessing = false);
@@ -159,13 +274,43 @@ class _ScanScreenState extends State<ScanScreen> {
       child: Scaffold(
         backgroundColor: const Color(0xFFF0F2F5),
         appBar: AppBar(
-          backgroundColor: Colors.blue.shade700,
-          title: Text(
-            widget.sessionName,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-            ),
+          backgroundColor: _isOnline
+              ? Colors.blue.shade700
+              : Colors.grey.shade700,
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                widget.sessionName,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _isOnline ? Icons.wifi : Icons.wifi_off,
+                    color: _isOnline ? Colors.greenAccent : Colors.orangeAccent,
+                    size: 13,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _isOnline
+                        ? 'متصل'
+                        : 'غير متصل${_pendingCount > 0 ? ' • $_pendingCount في الانتظار' : ''}',
+                    style: TextStyle(
+                      color: _isOnline
+                          ? Colors.greenAccent
+                          : Colors.orangeAccent,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
           centerTitle: true,
           leading: IconButton(
@@ -189,6 +334,35 @@ class _ScanScreenState extends State<ScanScreen> {
         ),
         body: Column(
           children: [
+            // شريط تحذير offline
+            if (!_isOnline)
+              Container(
+                width: double.infinity,
+                color: Colors.orange.shade100,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.info_outline,
+                      color: Colors.orange,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'وضع عدم الاتصال — البيانات محفوظة محلياً وستُرفع تلقائياً عند الاتصال',
+                        style: TextStyle(
+                          color: Colors.orange.shade800,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             Container(
               color: Colors.white,
               padding: const EdgeInsets.all(16),
@@ -307,13 +481,17 @@ class _ScanScreenState extends State<ScanScreen> {
                         return _ScannedItemCard(
                           item: item,
                           onDelete: () async {
-                            final lineId = item['id'];
-                            await http.delete(
-                              Uri.parse(
-                                '$_supabaseUrl/rest/v1/inventory_lines?id=eq.$lineId',
-                              ),
-                              headers: _headers,
-                            );
+                            if (item['synced'] == true && item['id'] != null) {
+                              await http.delete(
+                                Uri.parse(
+                                  '$_supabaseUrl/rest/v1/inventory_lines?id=eq.${item['id']}',
+                                ),
+                                headers: _headers,
+                              );
+                            } else if (item['local_id'] != null) {
+                              await LocalDb.deleteScan(item['local_id'] as int);
+                              setState(() => _pendingCount--);
+                            }
                             setState(() => _scannedItems.removeAt(index));
                           },
                         );
@@ -374,6 +552,7 @@ class _ScannedItemCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isSynced = item['synced'] == true;
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       elevation: 1,
@@ -386,10 +565,15 @@ class _ScannedItemCard extends StatelessWidget {
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.1),
+                color: isSynced
+                    ? Colors.blue.withOpacity(0.1)
+                    : Colors.orange.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Icon(Icons.qr_code, color: Colors.blue),
+              child: Icon(
+                Icons.qr_code,
+                color: isSynced ? Colors.blue : Colors.orange,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -408,6 +592,11 @@ class _ScannedItemCard extends StatelessWidget {
                     style: const TextStyle(color: Colors.black45, fontSize: 12),
                     textDirection: TextDirection.ltr,
                   ),
+                  if (!isSynced)
+                    const Text(
+                      '⏳ في انتظار المزامنة',
+                      style: TextStyle(color: Colors.orange, fontSize: 11),
+                    ),
                 ],
               ),
             ),

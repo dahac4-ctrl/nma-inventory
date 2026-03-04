@@ -18,6 +18,8 @@ dependencies:
   path_provider: ^2.1.5
   open_file: ^3.3.2
   share_plus: ^12.0.1
+  sqflite: ^2.3.3
+  connectivity_plus: ^6.1.1
 
 dev_dependencies:
   flutter_test:
